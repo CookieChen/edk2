@@ -166,7 +166,7 @@ def SplitModuleType(Key):
 #
 def ReplaceMacro(String, MacroDefinitions=None, SelfReplacement=False, Line=None, FileName=None, Flag=False):
     LastString = String
-    if MacroDefinitions == None:
+    if MacroDefinitions is None:
         MacroDefinitions = {}
     while MacroDefinitions:
         QuotedStringList = []
@@ -244,7 +244,7 @@ def ReplaceMacro(String, MacroDefinitions=None, SelfReplacement=False, Line=None
 #
 def NormPath(Path, Defines=None):
     IsRelativePath = False
-    if Defines == None:
+    if Defines is None:
         Defines = {}
     if Path:
         if Path[0] == '.':
@@ -524,7 +524,7 @@ def PreCheck(FileName, FileContent, SupSectionTag):
 #                            to be checked
 #
 def CheckFileType(CheckFilename, ExtName, ContainerFilename, SectionName, Line, LineNo= -1):
-    if CheckFilename != '' and CheckFilename != None:
+    if CheckFilename != '' and CheckFilename is not None:
         (Root, Ext) = os.path.splitext(CheckFilename)
         if Ext.upper() != ExtName.upper() and Root:
             ContainerFile = open(ContainerFilename, 'r').read()
@@ -552,7 +552,7 @@ def CheckFileType(CheckFilename, ExtName, ContainerFilename, SectionName, Line, 
 #
 def CheckFileExist(WorkspaceDir, CheckFilename, ContainerFilename, SectionName, Line, LineNo= -1):
     CheckFile = ''
-    if CheckFilename != '' and CheckFilename != None:
+    if CheckFilename != '' and CheckFilename is not None:
         CheckFile = WorkspaceFile(WorkspaceDir, CheckFilename)
         if not os.path.isfile(CheckFile):
             ContainerFile = open(ContainerFilename, 'r').read()
@@ -969,6 +969,7 @@ def GetUniFileName(FilePath, FileName):
         pass
 
     LargestIndex = -1
+    IndexNotFound = True
     for File in Files:
         if File.upper().startswith(FileName.upper()) and File.upper().endswith('.UNI'):
             Index = File.upper().replace(FileName.upper(), '').replace('.UNI', '')
@@ -978,11 +979,12 @@ def GetUniFileName(FilePath, FileName):
                 except Exception:
                     Index = -1
             else:
+                IndexNotFound = False
                 Index = 0
             if Index > LargestIndex:
                 LargestIndex = Index + 1
 
-    if LargestIndex > -1:
+    if LargestIndex > -1 and not IndexNotFound:
         return os.path.normpath(os.path.join(FilePath, FileName + str(LargestIndex) + '.uni'))
     else:
         return os.path.normpath(os.path.join(FilePath, FileName + '.uni'))

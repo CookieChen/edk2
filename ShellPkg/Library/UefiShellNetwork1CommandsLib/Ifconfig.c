@@ -2,7 +2,7 @@
   The implementation for Shell command ifconfig based on IP4Config2 protocol.
 
   (C) Copyright 2013-2015 Hewlett-Packard Development Company, L.P.<BR>
-  Copyright (c) 2006 - 2016, Intel Corporation. All rights reserved.<BR>
+  Copyright (c) 2006 - 2017, Intel Corporation. All rights reserved.<BR>
 
   This program and the accompanying materials
   are licensed and made available under the terms and conditions of the BSD License
@@ -550,11 +550,11 @@ IfConfigShowInterfaceInfo (
   LIST_ENTRY                   *Entry;
   LIST_ENTRY                   *Next;
   IFCONFIG_INTERFACE_CB        *IfCb;
-  BOOLEAN                       MediaPresent;
+  EFI_STATUS                    MediaStatus;
   EFI_IPv4_ADDRESS              Gateway;
   UINT32                        Index;
   
-  MediaPresent = TRUE;
+  MediaStatus = EFI_SUCCESS;
 
   if (IsListEmpty (IfList)) {
     ShellPrintHiiEx (-1, -1, NULL, STRING_TOKEN (STR_IFCONFIG_INVALID_INTERFACE), gShellNetwork1HiiHandle);
@@ -576,11 +576,14 @@ IfConfigShowInterfaceInfo (
     //
     // Get Media State.
     //
-    NetLibDetectMedia (IfCb->NicHandle, &MediaPresent);
-    if (!MediaPresent) {
-      ShellPrintHiiEx (-1, -1, NULL, STRING_TOKEN (STR_IFCONFIG_INFO_MEDIA_STATE), gShellNetwork1HiiHandle, L"Media disconnected");
+    if (EFI_SUCCESS == NetLibDetectMediaWaitTimeout (IfCb->NicHandle, 0, &MediaStatus)) {
+      if (MediaStatus != EFI_SUCCESS) {
+        ShellPrintHiiEx (-1, -1, NULL, STRING_TOKEN (STR_IFCONFIG_INFO_MEDIA_STATE), gShellNetwork1HiiHandle, L"Media disconnected");
+      } else {
+        ShellPrintHiiEx (-1, -1, NULL, STRING_TOKEN (STR_IFCONFIG_INFO_MEDIA_STATE), gShellNetwork1HiiHandle, L"Media present");
+      }
     } else {
-      ShellPrintHiiEx (-1, -1, NULL, STRING_TOKEN (STR_IFCONFIG_INFO_MEDIA_STATE), gShellNetwork1HiiHandle, L"Media present");
+      ShellPrintHiiEx (-1, -1, NULL, STRING_TOKEN (STR_IFCONFIG_INFO_MEDIA_STATE), gShellNetwork1HiiHandle, L"Media state unknown");
     }
 
     //
@@ -837,6 +840,8 @@ IfConfigSetInterfaceInfo (
   EFI_IP4_CONFIG2_MANUAL_ADDRESS   ManualAddress;
   UINTN                            DataSize;
   EFI_IPv4_ADDRESS                 Gateway;
+  IP4_ADDR                         SubnetMask;
+  IP4_ADDR                         TempGateway;
   EFI_IPv4_ADDRESS                 *Dns;
   ARG_LIST                         *Tmp;
   UINTN                            Index;
@@ -1014,6 +1019,21 @@ IfConfigSetInterfaceInfo (
       Status = NetLibStrToIp4 (VarArg->Arg, &Gateway);
       if (EFI_ERROR(Status)) {
         ShellPrintHiiEx(-1, -1, NULL,STRING_TOKEN (STR_IFCONFIG_INVALID_IPADDRESS), gShellNetwork1HiiHandle, VarArg->Arg);
+        ShellStatus = SHELL_INVALID_PARAMETER;
+        goto ON_EXIT;
+      }
+
+      //
+      // Need to check the gateway validity before set Manual Address.
+      // In case we can set manual address but fail to configure Gateway.
+      //
+      CopyMem (&SubnetMask, &ManualAddress.SubnetMask, sizeof (IP4_ADDR));
+      CopyMem (&TempGateway, &Gateway, sizeof (IP4_ADDR));
+      SubnetMask  = NTOHL (SubnetMask);
+      TempGateway = NTOHL (TempGateway);
+      if ((SubnetMask != 0) &&
+          !NetIp4IsUnicast (TempGateway, SubnetMask)) {
+        ShellPrintHiiEx (-1, -1, NULL, STRING_TOKEN (STR_IFCONFIG_INVALID_GATEWAY), gShellNetwork1HiiHandle, VarArg->Arg);
         ShellStatus = SHELL_INVALID_PARAMETER;
         goto ON_EXIT;
       }

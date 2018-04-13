@@ -10,7 +10,7 @@
   Tcg2PhysicalPresenceLibSubmitRequestToPreOSFunction() and Tcg2PhysicalPresenceLibGetUserConfirmationStatusFunction()
   will receive untrusted input and do validation.
 
-Copyright (c) 2015 - 2016, Intel Corporation. All rights reserved.<BR>
+Copyright (c) 2015 - 2018, Intel Corporation. All rights reserved.<BR>
 This program and the accompanying materials 
 are licensed and made available under the terms and conditions of the BSD License 
 which accompanies this distribution.  The full text of the license may be found at 
@@ -27,12 +27,16 @@ WITHOUT WARRANTIES OR REPRESENTATIONS OF ANY KIND, EITHER EXPRESS OR IMPLIED.
 
 #include <Protocol/SmmVariable.h>
 
+#include <Library/BaseLib.h>
 #include <Library/DebugLib.h>
 #include <Library/BaseMemoryLib.h>
 #include <Library/Tcg2PpVendorLib.h>
 #include <Library/SmmServicesTableLib.h>
 
+#define     PP_INF_VERSION_1_2    "1.2"
+
 EFI_SMM_VARIABLE_PROTOCOL  *mTcg2PpSmmVariable;
+BOOLEAN                    mIsTcg2PPVerLowerThan_1_3 = FALSE;
 
 /**
   The handler for TPM physical presence function:
@@ -130,10 +134,7 @@ Tcg2PhysicalPresenceLibSubmitRequestToPreOSFunctionEx (
   }
 
   if ((*OperationRequest > TCG2_PHYSICAL_PRESENCE_NO_ACTION_MAX) &&
-      (*OperationRequest < TCG2_PHYSICAL_PRESENCE_VENDOR_SPECIFIC_OPERATION) ) {
-    //
-    // This command requires UI to prompt user for Auth data.
-    //
+      (*OperationRequest < TCG2_PHYSICAL_PRESENCE_STORAGE_MANAGEMENT_BEGIN) ) {
     ReturnCode = TCG_PP_SUBMIT_REQUEST_TO_PREOS_NOT_IMPLEMENTED;
     goto EXIT;
   }
@@ -150,12 +151,11 @@ Tcg2PhysicalPresenceLibSubmitRequestToPreOSFunctionEx (
                                    DataSize,
                                    &PpData
                                    );
-  }
-
-  if (EFI_ERROR (Status)) { 
-    DEBUG ((EFI_D_ERROR, "[TPM2] Set PP variable failure! Status = %r\n", Status));
-    ReturnCode = TCG_PP_SUBMIT_REQUEST_TO_PREOS_GENERAL_FAILURE;
-    goto EXIT;
+    if (EFI_ERROR (Status)) { 
+      DEBUG ((EFI_D_ERROR, "[TPM2] Set PP variable failure! Status = %r\n", Status));
+      ReturnCode = TCG_PP_SUBMIT_REQUEST_TO_PREOS_GENERAL_FAILURE;
+      goto EXIT;
+    }
   }
 
   if (*OperationRequest >= TCG2_PHYSICAL_PRESENCE_VENDOR_SPECIFIC_OPERATION) {
@@ -168,7 +168,7 @@ Tcg2PhysicalPresenceLibSubmitRequestToPreOSFunctionEx (
                                    &Flags
                                    );
     if (EFI_ERROR (Status)) {
-      Flags.PPFlags = TCG2_BIOS_TPM_MANAGEMENT_FLAG_DEFAULT;
+      Flags.PPFlags = TCG2_BIOS_TPM_MANAGEMENT_FLAG_DEFAULT | TCG2_BIOS_STORAGE_MANAGEMENT_FLAG_DEFAULT;
     }
     ReturnCode = Tcg2PpVendorLibSubmitRequestToPreOSFunction (*OperationRequest, Flags.PPFlags, *RequestParameter);
   }
@@ -295,6 +295,7 @@ Tcg2PhysicalPresenceLibGetUserConfirmationStatusFunction (
       }
       break;
 
+    case TCG2_PHYSICAL_PRESENCE_NO_ACTION:
     case TCG2_PHYSICAL_PRESENCE_SET_PP_REQUIRED_FOR_CLEAR_TRUE:
       RequestConfirmed = TRUE;
       break;
@@ -318,13 +319,44 @@ Tcg2PhysicalPresenceLibGetUserConfirmationStatusFunction (
       RequestConfirmed = TRUE;
       break;
 
-    default:
-      if (OperationRequest <= TCG2_PHYSICAL_PRESENCE_NO_ACTION_MAX) {
+    case TCG2_PHYSICAL_PRESENCE_ENABLE_BLOCK_SID:
+      if ((Flags.PPFlags & TCG2_BIOS_STORAGE_MANAGEMENT_FLAG_PP_REQUIRED_FOR_ENABLE_BLOCK_SID) == 0) {
         RequestConfirmed = TRUE;
-      } else {
+      }
+      break;
+
+    case TCG2_PHYSICAL_PRESENCE_DISABLE_BLOCK_SID:
+      if ((Flags.PPFlags & TCG2_BIOS_STORAGE_MANAGEMENT_FLAG_PP_REQUIRED_FOR_DISABLE_BLOCK_SID) == 0) {
+        RequestConfirmed = TRUE;
+      }
+      break;
+
+    case TCG2_PHYSICAL_PRESENCE_SET_PP_REQUIRED_FOR_ENABLE_BLOCK_SID_FUNC_TRUE:
+    case TCG2_PHYSICAL_PRESENCE_SET_PP_REQUIRED_FOR_DISABLE_BLOCK_SID_FUNC_TRUE:
+      RequestConfirmed = TRUE;
+      break;
+
+    case TCG2_PHYSICAL_PRESENCE_SET_PP_REQUIRED_FOR_ENABLE_BLOCK_SID_FUNC_FALSE:
+    case TCG2_PHYSICAL_PRESENCE_SET_PP_REQUIRED_FOR_DISABLE_BLOCK_SID_FUNC_FALSE:
+      break;
+
+    default:
+      if (!mIsTcg2PPVerLowerThan_1_3) {
         if (OperationRequest < TCG2_PHYSICAL_PRESENCE_VENDOR_SPECIFIC_OPERATION) {
+          //
+          // TCG2 PP1.3 spec defined operations that are reserved or un-implemented
+          //
           return TCG_PP_GET_USER_CONFIRMATION_NOT_IMPLEMENTED;
         }
+      } else {
+       //
+       // TCG PP lower than 1.3. (1.0, 1.1, 1.2)
+       //
+       if (OperationRequest <= TCG2_PHYSICAL_PRESENCE_NO_ACTION_MAX) {
+         RequestConfirmed = TRUE;
+       } else if (OperationRequest < TCG2_PHYSICAL_PRESENCE_VENDOR_SPECIFIC_OPERATION) {
+         return TCG_PP_GET_USER_CONFIRMATION_NOT_IMPLEMENTED;
+       }
       }
       break;
   }
@@ -341,7 +373,7 @@ Tcg2PhysicalPresenceLibGetUserConfirmationStatusFunction (
 }
 
 /**
-  The constructor function register UNI strings into imageHandle.
+  The constructor function locates SmmVariable protocol.
   
   It will ASSERT() if that operation fails and it will always return EFI_SUCCESS. 
 
@@ -359,6 +391,10 @@ Tcg2PhysicalPresenceLibConstructor (
   )
 {
   EFI_STATUS  Status;
+
+  if (AsciiStrnCmp(PP_INF_VERSION_1_2, (CHAR8 *)PcdGetPtr(PcdTcgPhysicalPresenceInterfaceVer), sizeof(PP_INF_VERSION_1_2) - 1) <= 0) {
+    mIsTcg2PPVerLowerThan_1_3 = TRUE;
+  }
 
   //
   // Locate SmmVariableProtocol.

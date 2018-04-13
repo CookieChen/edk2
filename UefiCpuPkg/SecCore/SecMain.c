@@ -1,7 +1,7 @@
 /** @file
   C functions in SEC
 
-  Copyright (c) 2008 - 2016, Intel Corporation. All rights reserved.<BR>
+  Copyright (c) 2008 - 2017, Intel Corporation. All rights reserved.<BR>
   This program and the accompanying materials
   are licensed and made available under the terms and conditions of the BSD License
   which accompanies this distribution.  The full text of the license may be found at
@@ -21,6 +21,14 @@ EFI_PEI_TEMPORARY_RAM_DONE_PPI gSecTemporaryRamDonePpi = {
 EFI_SEC_PLATFORM_INFORMATION_PPI  mSecPlatformInformationPpi = { SecPlatformInformation };
 
 EFI_PEI_PPI_DESCRIPTOR            mPeiSecPlatformInformationPpi[] = {
+  {
+    //
+    // SecPerformance PPI notify descriptor.
+    //
+    EFI_PEI_PPI_DESCRIPTOR_NOTIFY_CALLBACK,
+    &gPeiSecPerformancePpiGuid,
+    (VOID *) (UINTN) SecPerformancePpiCallBack
+  },
   {
     EFI_PEI_PPI_DESCRIPTOR_PPI,
     &gEfiTemporaryRamDonePpiGuid,
@@ -54,6 +62,44 @@ EFIAPI
 SecStartupPhase2(
   IN VOID                     *Context
   );
+
+/**
+  Entry point of the notification callback function itself within the PEIM.
+  It is to get SEC performance data and build HOB to convey the SEC performance
+  data to DXE phase.
+
+  @param  PeiServices      Indirect reference to the PEI Services Table.
+  @param  NotifyDescriptor Address of the notification descriptor data structure.
+  @param  Ppi              Address of the PPI that was installed.
+
+  @return Status of the notification.
+          The status code returned from this function is ignored.
+**/
+EFI_STATUS
+EFIAPI
+SecPerformancePpiCallBack (
+  IN EFI_PEI_SERVICES           **PeiServices,
+  IN EFI_PEI_NOTIFY_DESCRIPTOR  *NotifyDescriptor,
+  IN VOID                       *Ppi
+  )
+{
+  EFI_STATUS                    Status;
+  PEI_SEC_PERFORMANCE_PPI       *SecPerf;
+  FIRMWARE_SEC_PERFORMANCE      Performance;
+
+  SecPerf = (PEI_SEC_PERFORMANCE_PPI *) Ppi;
+  Status = SecPerf->GetPerformance ((CONST EFI_PEI_SERVICES **) PeiServices, SecPerf, &Performance);
+  if (!EFI_ERROR (Status)) {
+    BuildGuidDataHob (
+      &gEfiFirmwarePerformanceGuid,
+      &Performance,
+      sizeof (FIRMWARE_SEC_PERFORMANCE)
+    );
+    DEBUG ((DEBUG_INFO, "FPDT: SEC Performance Hob ResetEnd = %ld\n", Performance.ResetEnd));
+  }
+
+  return Status;
+}
 
 /**
 
@@ -143,7 +189,7 @@ SecStartup (
   //
   SecCoreData.DataSize               = (UINT16) sizeof (EFI_SEC_PEI_HAND_OFF);
   SecCoreData.BootFirmwareVolumeBase = BootFirmwareVolume;
-  SecCoreData.BootFirmwareVolumeSize = (UINTN)(0x100000000ULL - (UINTN) BootFirmwareVolume);
+  SecCoreData.BootFirmwareVolumeSize = (UINTN)((EFI_FIRMWARE_VOLUME_HEADER *) BootFirmwareVolume)->FvLength;
   SecCoreData.TemporaryRamBase       = (VOID*)(UINTN) TempRamBase;
   SecCoreData.TemporaryRamSize       = SizeOfRam;
   SecCoreData.PeiTemporaryRamBase    = SecCoreData.TemporaryRamBase;
@@ -230,6 +276,12 @@ SecStartupPhase2(
     ASSERT (SecCoreData->PeiTemporaryRamSize > Index * sizeof (EFI_PEI_PPI_DESCRIPTOR));
     SecCoreData->PeiTemporaryRamBase = (VOID *)((UINTN) SecCoreData->PeiTemporaryRamBase + Index * sizeof (EFI_PEI_PPI_DESCRIPTOR));
     SecCoreData->PeiTemporaryRamSize = SecCoreData->PeiTemporaryRamSize - Index * sizeof (EFI_PEI_PPI_DESCRIPTOR);
+    //
+    // Adjust the Base and Size to be 8-byte aligned as HOB which has 8byte aligned requirement
+    // will be built based on them in PEI phase.
+    //
+    SecCoreData->PeiTemporaryRamBase = (VOID *)(((UINTN)SecCoreData->PeiTemporaryRamBase + 7) & ~0x07);
+    SecCoreData->PeiTemporaryRamSize &= ~(UINTN)0x07;
   } else {
     //
     // No addition PPI, PpiList directly point to the common PPI list.
@@ -239,10 +291,10 @@ SecStartupPhase2(
 
   DEBUG ((
     DEBUG_INFO,
-    "%a() Stack Base: 0x%lx, Stack Size: 0x%lx\n",
+    "%a() Stack Base: 0x%p, Stack Size: 0x%x\n",
     __FUNCTION__,
     SecCoreData->StackBase,
-    SecCoreData->StackSize
+    (UINT32) SecCoreData->StackSize
     ));
 
   //

@@ -1,7 +1,7 @@
 /** @file
   A shell application that triggers capsule update process.
 
-  Copyright (c) 2016, Intel Corporation. All rights reserved.<BR>
+  Copyright (c) 2016 - 2018, Intel Corporation. All rights reserved.<BR>
   This program and the accompanying materials
   are licensed and made available under the terms and conditions of the BSD License
   which accompanies this distribution.  The full text of the license may be found at
@@ -21,11 +21,8 @@
 #include <Library/UefiRuntimeServicesTableLib.h>
 #include <Library/UefiLib.h>
 #include <Library/PrintLib.h>
-#include <Protocol/LoadedImage.h>
-#include <Protocol/SimpleFileSystem.h>
+#include <Library/BmpSupportLib.h>
 #include <Protocol/GraphicsOutput.h>
-#include <Guid/FileInfo.h>
-#include <Guid/Gpt.h>
 #include <Guid/GlobalVariable.h>
 #include <Guid/CapsuleReport.h>
 #include <Guid/SystemResourceTable.h>
@@ -86,6 +83,22 @@ DumpFmpData (
   );
 
 /**
+  Dump FMP image data.
+
+  @param[in]  ImageTypeId   The ImageTypeId of the FMP image.
+                            It is used to identify the FMP protocol.
+  @param[in]  ImageIndex    The ImageIndex of the FMP image.
+                            It is the input parameter for FMP->GetImage().
+  @param[in]  ImageName     The file name to hold the output FMP image.
+**/
+VOID
+DumpFmpImage (
+  IN EFI_GUID  *ImageTypeId,
+  IN UINTN     ImageIndex,
+  IN CHAR16    *ImageName
+  );
+
+/**
   Dump ESRT info.
 **/
 VOID
@@ -101,7 +114,8 @@ DumpEsrtData (
   @param[out] Buffer          The file buffer
 
   @retval EFI_SUCCESS    Read file successfully
-  @retval EFI_NOT_FOUND  File not found
+  @retval EFI_NOT_FOUND  Shell protocol or file not found
+  @retval others         Read file failed
 **/
 EFI_STATUS
 ReadFileToBuffer (
@@ -118,6 +132,8 @@ ReadFileToBuffer (
   @param[in] Buffer          The file buffer
 
   @retval EFI_SUCCESS    Write file successfully
+  @retval EFI_NOT_FOUND  Shell protocol not found
+  @retval others         Write file failed
 **/
 EFI_STATUS
 WriteFileFromBuffer (
@@ -158,15 +174,21 @@ CreateBmpFmp (
   EFI_DISPLAY_CAPSULE                           *DisplayCapsule;
   EFI_STATUS                                    Status;
   EFI_GRAPHICS_OUTPUT_PROTOCOL                  *Gop;
+  EFI_GRAPHICS_OUTPUT_MODE_INFORMATION          *Info;
+  EFI_GRAPHICS_OUTPUT_BLT_PIXEL                 *GopBlt;
+  UINTN                                         GopBltSize;
+  UINTN                                         Height;
+  UINTN                                         Width;
 
   Status = gBS->LocateProtocol(&gEfiGraphicsOutputProtocolGuid, NULL, (VOID **)&Gop);
   if (EFI_ERROR(Status)) {
     Print(L"CapsuleApp: NO GOP is found.\n");
     return EFI_UNSUPPORTED;
   }
+  Info = Gop->Mode->Info;
   Print(L"Current GOP: Mode - %d, ", Gop->Mode->Mode);
-  Print(L"HorizontalResolution - %d, ", Gop->Mode->Info->HorizontalResolution);
-  Print(L"VerticalResolution - %d\n", Gop->Mode->Info->VerticalResolution);
+  Print(L"HorizontalResolution - %d, ", Info->HorizontalResolution);
+  Print(L"VerticalResolution - %d\n", Info->VerticalResolution);
   // HorizontalResolution >= BMP_IMAGE_HEADER.PixelWidth
   // VerticalResolution   >= BMP_IMAGE_HEADER.PixelHeight
 
@@ -192,6 +214,35 @@ CreateBmpFmp (
     goto Done;
   }
 
+  GopBlt = NULL;
+  Status = TranslateBmpToGopBlt (
+             BmpBuffer,
+             FileSize,
+             &GopBlt,
+             &GopBltSize,
+             &Height,
+             &Width
+             );
+  if (EFI_ERROR(Status)) {
+    Print(L"CapsuleApp: BMP image (%s) is not valid.\n", BmpName);
+    goto Done;
+  }
+  if (GopBlt != NULL) {
+    FreePool (GopBlt);
+  }
+  Print(L"BMP image (%s), Width - %d, Height - %d\n", BmpName, Width, Height);
+
+  if (Height > Info->VerticalResolution) {
+    Status = EFI_INVALID_PARAMETER;
+    Print(L"CapsuleApp: BMP image (%s) height is larger than current resolution.\n", BmpName);
+    goto Done;
+  }
+  if (Width > Info->HorizontalResolution) {
+    Status = EFI_INVALID_PARAMETER;
+    Print(L"CapsuleApp: BMP image (%s) width is larger than current resolution.\n", BmpName);
+    goto Done;
+  }
+
   FullCapsuleBufferSize = sizeof(EFI_DISPLAY_CAPSULE) + FileSize;
   FullCapsuleBuffer = AllocatePool(FullCapsuleBufferSize);
   if (FullCapsuleBuffer == NULL) {
@@ -211,8 +262,27 @@ CreateBmpFmp (
   DisplayCapsule->ImagePayload.ImageType = 0; // BMP
   DisplayCapsule->ImagePayload.Reserved = 0;
   DisplayCapsule->ImagePayload.Mode = Gop->Mode->Mode;
-  DisplayCapsule->ImagePayload.OffsetX = 0;
-  DisplayCapsule->ImagePayload.OffsetY = 0;
+
+  //
+  // Center the bitmap horizontally
+  //
+  DisplayCapsule->ImagePayload.OffsetX = (UINT32)((Info->HorizontalResolution - Width) / 2);
+
+  //
+  // Put bitmap 3/4 down the display.  If bitmap is too tall, then align bottom
+  // of bitmap at bottom of display.
+  //
+  DisplayCapsule->ImagePayload.OffsetY =
+    MIN (
+      (UINT32)(Info->VerticalResolution - Height),
+      (UINT32)(((3 * Info->VerticalResolution) - (2 * Height)) / 4)
+      );
+
+  Print(L"BMP image (%s), OffsetX - %d, OffsetY - %d\n",
+    BmpName,
+    DisplayCapsule->ImagePayload.OffsetX,
+    DisplayCapsule->ImagePayload.OffsetY
+    );
 
   CopyMem((DisplayCapsule + 1), BmpBuffer, FileSize);
 
@@ -482,7 +552,7 @@ BuildGatherList (
       goto ERREXIT;
     } else {
       Print (L"CapsuleApp: creating capsule descriptors at 0x%X\n", (UINTN) BlockDescriptors1);
-      Print (L"CapsuleApp: capsule data starts          at 0x%X with size 0x%X\n", (UINTN) CapsuleBuffer, FileSize);
+      Print (L"CapsuleApp: capsule data starts          at 0x%X with size 0x%X\n", (UINTN) CapsuleBuffer[Index], FileSize[Index]);
     }
 
     //
@@ -638,7 +708,7 @@ CleanGatherList (
         break;
       }
 
-      TempBlockPtr2 = (VOID *) ((UINTN) TempBlockPtr->Union.ContinuationPointer);
+      TempBlockPtr2 = (VOID *) ((UINTN) TempBlockPtr[Index].Union.ContinuationPointer);
       FreePool(TempBlockPtr1);
       TempBlockPtr1 = TempBlockPtr2;
     }
@@ -654,7 +724,7 @@ PrintUsage (
   )
 {
   Print(L"CapsuleApp:  usage\n");
-  Print(L"  CapsuleApp <Capsule...>\n");
+  Print(L"  CapsuleApp <Capsule...> [-NR]\n");
   Print(L"  CapsuleApp -S\n");
   Print(L"  CapsuleApp -C\n");
   Print(L"  CapsuleApp -P\n");
@@ -662,7 +732,10 @@ PrintUsage (
   Print(L"  CapsuleApp -G <BMP> -O <Capsule>\n");
   Print(L"  CapsuleApp -N <Capsule> -O <NestedCapsule>\n");
   Print(L"  CapsuleApp -D <Capsule>\n");
+  Print(L"  CapsuleApp -P GET <ImageTypeId> <Index> -O <FileName>\n");
   Print(L"Parameter:\n");
+  Print(L"  -NR: No reset will be triggered for the capsule\n");
+  Print(L"       with CAPSULE_FLAGS_PERSIST_ACROSS_RESET and without CAPSULE_FLAGS_INITIATE_RESET.\n");
   Print(L"  -S:  Dump capsule report variable (EFI_CAPSULE_REPORT_GUID),\n");
   Print(L"       which is defined in UEFI specification.\n");
   Print(L"  -C:  Clear capsule report variable (EFI_CAPSULE_RPORT_GUID),\n");
@@ -696,6 +769,7 @@ UefiMain (
   )
 {
   EFI_STATUS                    Status;
+  RETURN_STATUS                 RStatus;
   UINTN                         FileSize[MAX_CAPSULE_NUM];
   VOID                          *CapsuleBuffer[MAX_CAPSULE_NUM];
   EFI_CAPSULE_BLOCK_DESCRIPTOR  *BlockDescriptors;
@@ -703,6 +777,7 @@ UefiMain (
   UINT64                         MaxCapsuleSize;
   EFI_RESET_TYPE                 ResetType;
   BOOLEAN                        NeedReset;
+  BOOLEAN                        NoReset;
   CHAR16                         *CapsuleName;
   UINTN                          CapsuleNum;
   UINTN                          Index;
@@ -737,7 +812,27 @@ UefiMain (
     return Status;
   }
   if (StrCmp(Argv[1], L"-P") == 0) {
-    DumpFmpData();
+    if (Argc == 2) {
+      DumpFmpData();
+    }
+    if (Argc >= 3) {
+      if (StrCmp(Argv[2], L"GET") == 0) {
+        EFI_GUID  ImageTypeId;
+        UINTN     ImageIndex;
+        //
+        // FMP->GetImage()
+        //
+        RStatus = StrToGuid (Argv[3], &ImageTypeId);
+        if (RETURN_ERROR (RStatus) || (Argv[3][GUID_STRING_LENGTH] != L'\0')) {
+          Print (L"Invalid ImageTypeId - %s\n", Argv[3]);
+          return EFI_INVALID_PARAMETER;
+        }
+        ImageIndex = StrDecimalToUintn(Argv[4]);
+        if (StrCmp(Argv[5], L"-O") == 0) {
+          DumpFmpImage(&ImageTypeId, ImageIndex, Argv[6]);
+        }
+      }
+    }
     return EFI_SUCCESS;
   }
   if (StrCmp(Argv[1], L"-E") == 0) {
@@ -745,7 +840,13 @@ UefiMain (
     return EFI_SUCCESS;
   }
   CapsuleFirstIndex = 1;
-  CapsuleLastIndex = Argc - 1;
+  NoReset = FALSE;
+  if ((Argc > 1) && (StrCmp(Argv[Argc - 1], L"-NR") == 0)) {
+    NoReset = TRUE;
+    CapsuleLastIndex = Argc - 2;
+  } else {
+    CapsuleLastIndex = Argc - 1;
+  }
   CapsuleNum = CapsuleLastIndex - CapsuleFirstIndex + 1;
 
   if (CapsuleFirstIndex > CapsuleLastIndex) {
@@ -817,10 +918,19 @@ UefiMain (
       goto Done;
     }
     //
-    // For capsule who has reset flag, after calling UpdateCapsule service,triger a
-    // system reset to process capsule persist across a system reset.
+    // For capsule with CAPSULE_FLAGS_PERSIST_ACROSS_RESET + CAPSULE_FLAGS_INITIATE_RESET,
+    // a system reset should have been triggered by gRT->UpdateCapsule() calling above.
     //
-    gRT->ResetSystem (ResetType, EFI_SUCCESS, 0, NULL);
+    // For capsule with CAPSULE_FLAGS_PERSIST_ACROSS_RESET and without CAPSULE_FLAGS_INITIATE_RESET,
+    // check if -NR (no-reset) has been specified or not.
+    //
+    if (!NoReset) {
+      //
+      // For capsule who has reset flag and no -NR (no-reset) has been specified, after calling UpdateCapsule service,
+      // trigger a system reset to process capsule persist across a system reset.
+      //
+      gRT->ResetSystem (ResetType, EFI_SUCCESS, 0, NULL);
+    }
   } else {
     //
     // For capsule who has no reset flag, only call UpdateCapsule Service without a

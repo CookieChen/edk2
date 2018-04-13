@@ -50,6 +50,7 @@
   CryptoPkg/CryptoPkg.dec
   SecurityPkg/SecurityPkg.dec
   SignedCapsulePkg/SignedCapsulePkg.dec
+  SourceLevelDebugPkg/SourceLevelDebugPkg.dec
 
 [LibraryClasses]
   DxeServicesTableLib
@@ -69,7 +70,7 @@
   PrintLib
   BaseCryptLib
 #  TcgPhysicalPresenceLib
-  TrEEPhysicalPresenceLib  
+  Tcg2PhysicalPresenceLib  
   FileHandleLib
   S3BootScriptLib
   SerialPortLib

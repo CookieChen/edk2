@@ -1,5 +1,5 @@
 ;------------------------------------------------------------------------------ ;
-; Copyright (c) 2015 - 2016, Intel Corporation. All rights reserved.<BR>
+; Copyright (c) 2015 - 2018, Intel Corporation. All rights reserved.<BR>
 ; This program and the accompanying materials
 ; are licensed and made available under the terms and conditions of the BSD License
 ; which accompanies this distribution.  The full text of the license may be found at
@@ -48,19 +48,13 @@ BITS 16
     mov        si,  BufferStartLocation
     mov        ebx, [si]
 
-    mov        si,  ModeOffsetLocation
-    mov        eax, [si]
-    mov        si,  CodeSegmentLocation
-    mov        edx, [si]
-    mov        di,  ax
-    sub        di,  02h
-    mov        [di], dx
-    sub        di,  04h
-    add        eax, ebx
-    mov        [di],eax
-
     mov        si,  DataSegmentLocation
     mov        edx, [si]
+
+    ;
+    ; Get start address of 32-bit code in low memory (<1MB)
+    ;
+    mov        edi, ModeTransitionMemoryLocation
 
     mov        si, GdtrLocation
 o32 lgdt       [cs:si]
@@ -68,14 +62,21 @@ o32 lgdt       [cs:si]
     mov        si, IdtrLocation
 o32 lidt       [cs:si]
 
-    xor        ax,  ax
-    mov        ds,  ax
-
+    ;
+    ; Switch to protected mode
+    ;
     mov        eax, cr0                        ; Get control register 0
     or         eax, 000000003h                 ; Set PE bit (bit #0) & MP
     mov        cr0, eax
 
-    jmp        0:strict dword 0                ; far jump to protected mode
+    ; Switch to 32-bit code in executable memory (>1MB)
+o32 jmp far    [cs:di]
+
+;
+; Following code may be copied to memory with type of EfiBootServicesCode.
+; This is required at DXE phase if NX is enabled for EfiBootServicesCode of
+; memory.
+;
 BITS 32
 Flat32Start:                                   ; protected mode entry point
     mov        ds, dx
@@ -85,6 +86,12 @@ Flat32Start:                                   ; protected mode entry point
     mov        ss, dx
 
     mov        esi, ebx
+
+    ; Increment the number of APs executing here as early as possible
+    ; This is decremented in C code when AP is finished executing
+    mov        edi, esi
+    add        edi, NumApsExecutingLocation
+    lock inc   dword [edi]
 
     mov         edi, esi
     add         edi, EnableExecuteDisableLocation
@@ -114,7 +121,12 @@ Flat32Start:                                   ; protected mode entry point
     mov         cr0, eax
 
 SkipEnableExecuteDisable:
+    mov        edi, esi
+    add        edi, InitFlagLocation
+    cmp        dword [edi], 1       ; 1 == ApInitConfig
+    jnz        GetApicId
 
+    ; AP init
     mov        edi, esi
     add        edi, LockLocation
     mov        eax, NotVacantFlag
@@ -124,27 +136,68 @@ TestLock:
     cmp        eax, NotVacantFlag
     jz         TestLock
 
-    mov        edi, esi
-    add        edi, NumApsExecutingLocation
-    inc        dword [edi]
-    mov        ebx, [edi]
+    mov        ecx, esi
+    add        ecx, ApIndexLocation
+    inc        dword [ecx]
+    mov        ebx, [ecx]
 
-ProgramStack:
+Releaselock:
+    mov        eax, VacantFlag
+    xchg       [edi], eax
+
     mov        edi, esi
     add        edi, StackSizeLocation
     mov        eax, [edi]
+    mov        ecx, ebx
+    inc        ecx
+    mul        ecx                               ; EAX = StackSize * (CpuNumber + 1)
     mov        edi, esi
     add        edi, StackStartAddressLocation
     add        eax, [edi]
     mov        esp, eax
-    mov        [edi], eax
+    jmp        CProcedureInvoke
 
-Releaselock:
-    mov        eax, VacantFlag
-    mov        edi, esi
-    add        edi, LockLocation
-    xchg       [edi], eax
+GetApicId:
+    mov        eax, 0
+    cpuid
+    cmp        eax, 0bh
+    jb         NoX2Apic             ; CPUID level below CPUID_EXTENDED_TOPOLOGY
 
+    mov        eax, 0bh
+    xor        ecx, ecx
+    cpuid
+    test       ebx, 0ffffh
+    jz         NoX2Apic             ; CPUID.0BH:EBX[15:0] is zero
+
+    ; Processor is x2APIC capable; 32-bit x2APIC ID is already in EDX
+    jmp        GetProcessorNumber
+
+NoX2Apic:
+    ; Processor is not x2APIC capable, so get 8-bit APIC ID
+    mov        eax, 1
+    cpuid
+    shr        ebx, 24
+    mov        edx, ebx
+
+GetProcessorNumber:
+    ;
+    ; Get processor number for this AP
+    ; Note that BSP may become an AP due to SwitchBsp()
+    ;
+    xor         ebx, ebx
+    lea         eax, [esi + CpuInfoLocation]
+    mov         edi, [eax]
+
+GetNextProcNumber:
+    cmp         [edi], edx                       ; APIC ID match?
+    jz          ProgramStack
+    add         edi, 20
+    inc         ebx
+    jmp         GetNextProcNumber    
+
+ProgramStack:
+    mov         esp, [edi + 12]
+   
 CProcedureInvoke:
     push       ebp               ; push BIST data at top of AP stack
     xor        ebp, ebp          ; clear ebp for call stack trace
@@ -154,7 +207,7 @@ CProcedureInvoke:
     mov        eax, ASM_PFX(InitializeFloatingPointUnits)
     call       eax               ; Call assembly function to initialize FPU per UEFI spec
 
-    push       ebx               ; Push NumApsExecuting
+    push       ebx               ; Push ApIndex
     mov        eax, esi
     add        eax, LockLocation
     push       eax               ; push address of exchange info data buffer
@@ -169,19 +222,29 @@ CProcedureInvoke:
 RendezvousFunnelProcEnd:
 
 ;-------------------------------------------------------------------------------------
-;  AsmRelocateApLoop (MwaitSupport, ApTargetCState, PmCodeSegment);
+;  AsmRelocateApLoop (MwaitSupport, ApTargetCState, PmCodeSegment, TopOfApStack, CountTofinish);
 ;-------------------------------------------------------------------------------------
 global ASM_PFX(AsmRelocateApLoop)
 ASM_PFX(AsmRelocateApLoop):
 AsmRelocateApLoopStart:
-    cmp        byte [esp + 4], 1
+    mov        eax, esp
+    mov        esp, [eax + 16]     ; TopOfApStack
+    push       dword [eax]         ; push return address for stack trace
+    push       ebp
+    mov        ebp, esp
+    mov        ebx, [eax + 8]      ; ApTargetCState
+    mov        ecx, [eax + 4]      ; MwaitSupport
+    mov        eax, [eax + 20]     ; CountTofinish
+    lock dec   dword [eax]         ; (*CountTofinish)--
+    cmp        cl,  1              ; Check mwait-monitor support
     jnz        HltLoop
 MwaitLoop:
+    cli
     mov        eax, esp
     xor        ecx, ecx
     xor        edx, edx
     monitor
-    mov        eax, [esp + 8]    ; Mwait Cx, Target C-State per eax[7:4]
+    mov        eax, ebx            ; Mwait Cx, Target C-State per eax[7:4]
     shl        eax, 4
     mwait
     jmp        MwaitLoop
@@ -189,7 +252,6 @@ HltLoop:
     cli
     hlt
     jmp        HltLoop
-    ret
 AsmRelocateApLoopEnd:
 
 ;-------------------------------------------------------------------------------------
@@ -206,6 +268,7 @@ ASM_PFX(AsmGetAddressMap):
     mov        dword [ebx +  8h], RendezvousFunnelProcEnd - RendezvousFunnelProcStart
     mov        dword [ebx + 0Ch], AsmRelocateApLoopStart
     mov        dword [ebx + 10h], AsmRelocateApLoopEnd - AsmRelocateApLoopStart
+    mov        dword [ebx + 14h], Flat32Start - RendezvousFunnelProcStart
 
     popad
     ret

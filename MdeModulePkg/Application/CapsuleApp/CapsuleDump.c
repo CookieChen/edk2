@@ -31,9 +31,9 @@
 /**
   Read a file.
 
-  @param[in] FileName        The file to be read.
-  @param[in] BufferSize      The file buffer size
-  @param[in] Buffer          The file buffer
+  @param[in]  FileName        The file to be read.
+  @param[out] BufferSize      The file buffer size
+  @param[out] Buffer          The file buffer
 
   @retval EFI_SUCCESS    Read file successfully
   @retval EFI_NOT_FOUND  File not found
@@ -43,6 +43,22 @@ ReadFileToBuffer (
   IN  CHAR16                               *FileName,
   OUT UINTN                                *BufferSize,
   OUT VOID                                 **Buffer
+  );
+
+/**
+  Write a file.
+
+  @param[in] FileName        The file to be written.
+  @param[in] BufferSize      The file buffer size
+  @param[in] Buffer          The file buffer
+
+  @retval EFI_SUCCESS    Write file successfully
+**/
+EFI_STATUS
+WriteFileFromBuffer (
+  IN  CHAR16                               *FileName,
+  IN  UINTN                                BufferSize,
+  IN  VOID                                 *Buffer
   );
 
 /**
@@ -277,6 +293,8 @@ DmpCapsuleStatusVariable (
   UINTN                               CapsuleFileNameSize;
   CHAR16                              CapsuleIndexData[12];
   CHAR16                              *CapsuleIndex;
+  CHAR16                              *CapsuleFileName;
+  CHAR16                              *CapsuleTarget;
 
   Status = GetVariable2(
              L"CapsuleMax",
@@ -285,6 +303,7 @@ DmpCapsuleStatusVariable (
              NULL
              );
   if (!EFI_ERROR(Status)) {
+    ASSERT (CapsuleIndex != NULL);
     CopyMem(CapsuleIndexData, CapsuleIndex, 11 * sizeof(CHAR16));
     CapsuleIndexData[11] = 0;
     Print(L"CapsuleMax - %s\n", CapsuleIndexData);
@@ -297,6 +316,7 @@ DmpCapsuleStatusVariable (
              NULL
              );
   if (!EFI_ERROR(Status)) {
+    ASSERT (CapsuleIndex != NULL);
     CopyMem(CapsuleIndexData, CapsuleIndex, 11 * sizeof(CHAR16));
     CapsuleIndexData[11] = 0;
     Print(L"CapsuleLast - %s\n", CapsuleIndexData);
@@ -335,19 +355,17 @@ DmpCapsuleStatusVariable (
     }
 
     if (CompareGuid(&CapsuleResult->CapsuleGuid, &gEfiFmpCapsuleGuid)) {
-      if (CapsuleResult->VariableTotalSize >= sizeof(EFI_CAPSULE_RESULT_VARIABLE_HEADER) + sizeof(EFI_CAPSULE_RESULT_VARIABLE_FMP)) {
+      if (CapsuleResult->VariableTotalSize >= sizeof(EFI_CAPSULE_RESULT_VARIABLE_HEADER) + sizeof(EFI_CAPSULE_RESULT_VARIABLE_FMP) + sizeof(CHAR16) * 2) {
         CapsuleResultFmp = (EFI_CAPSULE_RESULT_VARIABLE_FMP *)(CapsuleResult + 1);
         Print(L"  Capsule FMP Version: 0x%x\n", CapsuleResultFmp->Version);
         Print(L"  Capsule FMP PayloadIndex: 0x%x\n", CapsuleResultFmp->PayloadIndex);
         Print(L"  Capsule FMP UpdateImageIndex: 0x%x\n", CapsuleResultFmp->UpdateImageIndex);
         Print(L"  Capsule FMP UpdateImageTypeId: %g\n", &CapsuleResultFmp->UpdateImageTypeId);
-        if (CapsuleResult->VariableTotalSize > sizeof(EFI_CAPSULE_RESULT_VARIABLE_HEADER) + sizeof(EFI_CAPSULE_RESULT_VARIABLE_FMP)) {
-          Print(L"  Capsule FMP CapsuleFileName: %s\n", (CapsuleResultFmp + 1));
-          CapsuleFileNameSize = StrSize((CHAR16 *)(CapsuleResultFmp + 1));
-          if (CapsuleResult->VariableTotalSize > sizeof(EFI_CAPSULE_RESULT_VARIABLE_HEADER) + sizeof(EFI_CAPSULE_RESULT_VARIABLE_FMP) + CapsuleFileNameSize) {
-            Print(L"  Capsule FMP CapsuleTarget: %s\n", (UINT8 *)(CapsuleResultFmp + 1) + CapsuleFileNameSize);
-          }
-        }
+        CapsuleFileName = (CHAR16 *)(CapsuleResultFmp + 1);
+        Print(L"  Capsule FMP CapsuleFileName: \"%s\"\n", CapsuleFileName);
+        CapsuleFileNameSize = StrSize(CapsuleFileName);
+        CapsuleTarget = (CHAR16 *)((UINTN)CapsuleFileName + CapsuleFileNameSize);
+        Print(L"  Capsule FMP CapsuleTarget: \"%s\"\n", CapsuleTarget);
       }
     }
 
@@ -735,4 +753,202 @@ DumpFmpData (
 
 EXIT:
   FreePool(HandleBuffer);
+}
+
+/**
+  Check if the ImageInfo includes the ImageTypeId.
+
+  @param[in] ImageInfo           A pointer to EFI_FIRMWARE_IMAGE_DESCRIPTOR.
+  @param[in] DescriptorCount     The count of EFI_FIRMWARE_IMAGE_DESCRIPTOR.
+  @param[in] DescriptorSize      The size of an individual EFI_FIRMWARE_IMAGE_DESCRIPTOR, in bytes.
+  @param[in] ImageTypeId         A unique GUID identifying the firmware image type.
+
+  @return TRUE  This ImageInfo includes the ImageTypeId
+  @return FALSE This ImageInfo does not include the ImageTypeId
+**/
+BOOLEAN
+IsThisFmpImageInfo (
+  IN EFI_FIRMWARE_IMAGE_DESCRIPTOR   *ImageInfo,
+  IN UINT8                           DescriptorCount,
+  IN UINTN                           DescriptorSize,
+  IN EFI_GUID                        *ImageTypeId
+  )
+{
+  EFI_FIRMWARE_IMAGE_DESCRIPTOR                 *CurrentImageInfo;
+  UINTN                                         Index;
+
+  CurrentImageInfo = ImageInfo;
+  for (Index = 0; Index < DescriptorCount; Index++) {
+    if (CompareGuid (&CurrentImageInfo->ImageTypeId, ImageTypeId)) {
+      return TRUE;
+    }
+    CurrentImageInfo = (EFI_FIRMWARE_IMAGE_DESCRIPTOR *)((UINT8 *)CurrentImageInfo + DescriptorSize);
+  }
+  return FALSE;
+}
+
+/**
+  return the FMP whoes ImageInfo includes the ImageTypeId.
+
+  @param[in] ImageTypeId         A unique GUID identifying the firmware image type.
+
+  @return The FMP whoes ImageInfo includes the ImageTypeId
+**/
+EFI_FIRMWARE_MANAGEMENT_PROTOCOL *
+FindFmpFromImageTypeId (
+  IN EFI_GUID  *ImageTypeId
+  )
+{
+  EFI_STATUS                                    Status;
+  EFI_FIRMWARE_MANAGEMENT_PROTOCOL              *Fmp;
+  EFI_FIRMWARE_MANAGEMENT_PROTOCOL              *TargetFmp;
+  EFI_HANDLE                                    *HandleBuffer;
+  UINTN                                         NumberOfHandles;
+  UINTN                                         Index;
+  EFI_FIRMWARE_IMAGE_DESCRIPTOR                 *FmpImageInfoBuf;
+  UINTN                                         ImageInfoSize;
+  UINT32                                        FmpImageInfoDescriptorVer;
+  UINT8                                         FmpImageInfoCount;
+  UINTN                                         DescriptorSize;
+  UINT32                                        PackageVersion;
+  CHAR16                                        *PackageVersionName;
+
+  Status = gBS->LocateHandleBuffer (
+                  ByProtocol,
+                  &gEfiFirmwareManagementProtocolGuid,
+                  NULL,
+                  &NumberOfHandles,
+                  &HandleBuffer
+                  );
+  if (EFI_ERROR(Status)) {
+    Print(L"FMP protocol - %r\n", EFI_NOT_FOUND);
+    return NULL;
+  }
+
+  TargetFmp = NULL;
+  for (Index = 0; Index < NumberOfHandles; Index++) {
+    Status = gBS->HandleProtocol(
+                    HandleBuffer[Index],
+                    &gEfiFirmwareManagementProtocolGuid,
+                    (VOID **)&Fmp
+                    );
+    if (EFI_ERROR(Status)) {
+      continue;
+    }
+
+    ImageInfoSize = 0;
+    Status = Fmp->GetImageInfo (
+                    Fmp,
+                    &ImageInfoSize,
+                    NULL,
+                    NULL,
+                    NULL,
+                    NULL,
+                    NULL,
+                    NULL
+                    );
+    if (Status != EFI_BUFFER_TOO_SMALL) {
+      continue;
+    }
+
+    FmpImageInfoBuf = NULL;
+    FmpImageInfoBuf = AllocateZeroPool (ImageInfoSize);
+    if (FmpImageInfoBuf == NULL) {
+      FreePool(HandleBuffer);
+      Print(L"Out of resource\n");
+      return NULL;
+    }
+
+    PackageVersionName = NULL;
+    Status = Fmp->GetImageInfo (
+                    Fmp,
+                    &ImageInfoSize,               // ImageInfoSize
+                    FmpImageInfoBuf,              // ImageInfo
+                    &FmpImageInfoDescriptorVer,   // DescriptorVersion
+                    &FmpImageInfoCount,           // DescriptorCount
+                    &DescriptorSize,              // DescriptorSize
+                    &PackageVersion,              // PackageVersion
+                    &PackageVersionName           // PackageVersionName
+                    );
+
+    //
+    // If FMP GetInformation interface failed, skip this resource
+    //
+    if (EFI_ERROR(Status)) {
+      FreePool(FmpImageInfoBuf);
+      continue;
+    }
+
+    if (PackageVersionName != NULL) {
+      FreePool(PackageVersionName);
+    }
+
+    if (IsThisFmpImageInfo (FmpImageInfoBuf, FmpImageInfoCount, DescriptorSize, ImageTypeId)) {
+      TargetFmp = Fmp;
+    }
+    FreePool(FmpImageInfoBuf);
+    if (TargetFmp != NULL) {
+      break;
+    }
+  }
+  FreePool(HandleBuffer);
+  return TargetFmp;
+}
+
+/**
+  Dump FMP image data.
+
+  @param[in]  ImageTypeId   The ImageTypeId of the FMP image.
+                            It is used to identify the FMP protocol.
+  @param[in]  ImageIndex    The ImageIndex of the FMP image.
+                            It is the input parameter for FMP->GetImage().
+  @param[in]  ImageName     The file name to hold the output FMP image.
+**/
+VOID
+DumpFmpImage (
+  IN EFI_GUID  *ImageTypeId,
+  IN UINTN     ImageIndex,
+  IN CHAR16    *ImageName
+  )
+{
+  EFI_STATUS                                    Status;
+  EFI_FIRMWARE_MANAGEMENT_PROTOCOL              *Fmp;
+  VOID                                          *Image;
+  UINTN                                         ImageSize;
+
+  Fmp = FindFmpFromImageTypeId (ImageTypeId);
+  if (Fmp == NULL) {
+    Print(L"No FMP include ImageTypeId %g\n", ImageTypeId);
+    return ;
+  }
+
+  if (ImageIndex > 0xFF) {
+    Print(L"ImageIndex 0x%x too big\n", ImageIndex);
+    return ;
+  }
+
+  Image = Fmp;
+  ImageSize = 0;
+  Status = Fmp->GetImage (Fmp, (UINT8)ImageIndex, Image, &ImageSize);
+  if (Status != EFI_BUFFER_TOO_SMALL) {
+    Print(L"Fmp->GetImage - %r\n", Status);
+    return ;
+  }
+
+  Image = AllocatePool (ImageSize);
+  if (Image == NULL) {
+    Print(L"Allocate FmpImage 0x%x - %r\n", ImageSize, EFI_OUT_OF_RESOURCES);
+    return ;
+  }
+
+  Status = Fmp->GetImage (Fmp, (UINT8)ImageIndex, Image, &ImageSize);
+  if (EFI_ERROR(Status)) {
+    Print(L"Fmp->GetImage - %r\n", Status);
+    return ;
+  }
+
+  Status = WriteFileFromBuffer(ImageName, ImageSize, Image);
+  Print(L"CapsuleApp: Dump %g ImageIndex (0x%x) to %s %r\n", ImageTypeId, ImageIndex, ImageName, Status);
+
+  return ;
 }

@@ -1,7 +1,7 @@
 ## @file
 # process FV image section generation
 #
-#  Copyright (c) 2007 - 2016, Intel Corporation. All rights reserved.<BR>
+#  Copyright (c) 2007 - 2017, Intel Corporation. All rights reserved.<BR>
 #
 #  This program and the accompanying materials
 #  are licensed and made available under the terms and conditions of the BSD License
@@ -50,10 +50,10 @@ class FvImageSection(FvImageSectionClassObject):
     #   @param  Dict        dictionary contains macro and its value
     #   @retval tuple       (Generated file name, section alignment)
     #
-    def GenSection(self, OutputPath, ModuleName, SecNum, KeyStringList, FfsInf = None, Dict = {}):
+    def GenSection(self, OutputPath, ModuleName, SecNum, KeyStringList, FfsInf = None, Dict = {}, IsMakefile = False):
 
         OutputFileList = []
-        if self.FvFileType != None:
+        if self.FvFileType is not None:
             FileList, IsSect = Section.Section.GetFileList(FfsInf, self.FvFileType, self.FvFileExtension)
             if IsSect :
                 return FileList, self.Alignment
@@ -75,14 +75,17 @@ class FvImageSection(FvImageSectionClassObject):
                     MaxFvAlignment = FvAlignmentValue
 
                 OutputFile = os.path.join(OutputPath, ModuleName + 'SEC' + Num + Ffs.SectionSuffix.get("FV_IMAGE"))
-                GenFdsGlobalVariable.GenerateSection(OutputFile, [FvFileName], 'EFI_SECTION_FIRMWARE_VOLUME_IMAGE')
+                GenFdsGlobalVariable.GenerateSection(OutputFile, [FvFileName], 'EFI_SECTION_FIRMWARE_VOLUME_IMAGE', IsMakefile=IsMakefile)
                 OutputFileList.append(OutputFile)
 
             # MaxFvAlignment is larger than or equal to 1K
             if MaxFvAlignment >= 0x400:
-                if MaxFvAlignment >= 0x10000:
-                    #The max alignment supported by FFS is 64K.
-                    self.Alignment = "64K"
+                if MaxFvAlignment >= 0x100000:
+                    #The max alignment supported by FFS is 16M.
+                    if MaxFvAlignment >=1000000:
+                        self.Alignment = "16M"
+                    else:
+                        self.Alignment = str(MaxFvAlignment / 0x100000) + "M"
                 else:
                     self.Alignment = str (MaxFvAlignment / 0x400) + "K"
             else:
@@ -93,20 +96,20 @@ class FvImageSection(FvImageSectionClassObject):
         #
         # Generate Fv
         #
-        if self.FvName != None:
+        if self.FvName is not None:
             Buffer = StringIO.StringIO('')
             Fv = GenFdsGlobalVariable.FdfParser.Profile.FvDict.get(self.FvName)
-            if Fv != None:
+            if Fv is not None:
                 self.Fv = Fv
-                FvFileName = Fv.AddToBuffer(Buffer, self.FvAddr, MacroDict = Dict)
-                if Fv.FvAlignment != None:
-                    if self.Alignment == None:
+                FvFileName = Fv.AddToBuffer(Buffer, self.FvAddr, MacroDict = Dict, Flag=IsMakefile)
+                if Fv.FvAlignment is not None:
+                    if self.Alignment is None:
                         self.Alignment = Fv.FvAlignment
                     else:
                         if GenFdsGlobalVariable.GetAlignment (Fv.FvAlignment) > GenFdsGlobalVariable.GetAlignment (self.Alignment):
                             self.Alignment = Fv.FvAlignment
             else:
-                if self.FvFileName != None:
+                if self.FvFileName is not None:
                     FvFileName = GenFdsGlobalVariable.ReplaceWorkspaceMacro(self.FvFileName)
                     if os.path.isfile(FvFileName):
                         FvFileObj = open (FvFileName,'rb')
@@ -117,9 +120,12 @@ class FvImageSection(FvImageSectionClassObject):
                         FvAlignmentValue = 1 << (ord (FvHeaderBuffer[0x2E]) & 0x1F)
                         # FvAlignmentValue is larger than or equal to 1K
                         if FvAlignmentValue >= 0x400:
-                            if FvAlignmentValue >= 0x10000:
-                                #The max alignment supported by FFS is 64K.
-                                self.Alignment = "64K"
+                            if FvAlignmentValue >= 0x100000:
+                                #The max alignment supported by FFS is 16M.
+                                if FvAlignmentValue >= 0x1000000:
+                                    self.Alignment = "16M"
+                                else:
+                                    self.Alignment = str(FvAlignmentValue / 0x100000) + "M"
                             else:
                                 self.Alignment = str (FvAlignmentValue / 0x400) + "K"
                         else:
@@ -133,7 +139,7 @@ class FvImageSection(FvImageSectionClassObject):
             # Prepare the parameter of GenSection
             #
             OutputFile = os.path.join(OutputPath, ModuleName + 'SEC' + SecNum + Ffs.SectionSuffix.get("FV_IMAGE"))
-            GenFdsGlobalVariable.GenerateSection(OutputFile, [FvFileName], 'EFI_SECTION_FIRMWARE_VOLUME_IMAGE')
+            GenFdsGlobalVariable.GenerateSection(OutputFile, [FvFileName], 'EFI_SECTION_FIRMWARE_VOLUME_IMAGE', IsMakefile=IsMakefile)
             OutputFileList.append(OutputFile)
 
             return OutputFileList, self.Alignment

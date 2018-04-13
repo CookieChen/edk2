@@ -14,7 +14,7 @@
 # Import Modules
 #
 from CommonClass import *
-from Common.Misc import sdict
+from collections import OrderedDict
 
 ## PackageHeaderClass
 #
@@ -62,7 +62,7 @@ class PackageIndustryStdHeaderClass(CommonClass):
 #
 # @var IncludeHeader:  To store value for IncludeHeader
 # @var ModuleType:     To store value for ModuleType, it is a set structure as
-#                      BASE | SEC | PEI_CORE | PEIM | DXE_CORE | DXE_DRIVER | DXE_RUNTIME_DRIVER | DXE_SAL_DRIVER | DXE_SMM_DRIVER | TOOL | UEFI_DRIVER | UEFI_APPLICATION | USER_DEFINED | SMM_CORE
+#                      BASE | SEC | PEI_CORE | PEIM | DXE_CORE | DXE_DRIVER | DXE_RUNTIME_DRIVER | DXE_SAL_DRIVER | DXE_SMM_DRIVER | TOOL | UEFI_DRIVER | UEFI_APPLICATION | USER_DEFINED | SMM_CORE | MM_STANDALONE | MM_CORE_STANDALONE
 #
 class PackageIncludePkgHeaderClass(object):
     def __init__(self):
@@ -107,7 +107,7 @@ class PackageClass(object):
         self.IndustryStdHeaders = []
         self.ModuleFiles = []
         # {[Guid, Value, Path(relative to WORKSPACE)]: ModuleClassObj}
-        self.Modules = sdict()
+        self.Modules = OrderedDict()
         self.PackageIncludePkgHeaders = []
         self.GuidDeclarations = []
         self.ProtocolDeclarations = []

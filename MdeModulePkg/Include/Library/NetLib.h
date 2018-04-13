@@ -2,7 +2,7 @@
   This library is only intended to be used by UEFI network stack modules.
   It provides basic functions for the UEFI network stack.
 
-Copyright (c) 2005 - 2016, Intel Corporation. All rights reserved.<BR>
+Copyright (c) 2005 - 2018, Intel Corporation. All rights reserved.<BR>
 This program and the accompanying materials
 are licensed and made available under the terms and conditions of the BSD License
 which accompanies this distribution.  The full text of the license may be found at<BR>
@@ -94,6 +94,12 @@ typedef UINT16          TCP_PORTNO;
 #define  DNS_CLASS_CH          3
 #define  DNS_CLASS_HS          4
 #define  DNS_CLASS_ANY         255
+
+//
+// Number of 100ns units time Interval for network media state detect
+//
+#define MEDIA_STATE_DETECT_TIME_INTERVAL  1000000U
+
 
 #pragma pack(1)
 
@@ -414,8 +420,10 @@ NetGetIpClass (
 
   ASSERT if NetMask is zero.
   
-  If all bits of the host address of IP are 0 or 1, IP is also not a valid unicast address.
-
+  If all bits of the host address of IP are 0 or 1, IP is also not a valid unicast address,
+  except when the originator is one of the endpoints of a point-to-point link with a 31-bit
+  mask (RFC3021).
+  
   @param[in]  Ip                    The IP to check against.
   @param[in]  NetMask               The mask of the IP.
 
@@ -431,6 +439,8 @@ NetIp4IsUnicast (
 
 /**
   Check whether the incoming IPv6 address is a valid unicast address.
+
+  ASSERT if Ip6 is NULL.
 
   If the address is a multicast address has binary 0xFF at the start, it is not
   a valid unicast address. If the address is unspecified ::, it is not a valid
@@ -453,6 +463,8 @@ NetIp6IsValidUnicast (
 /**
   Check whether the incoming Ipv6 address is the unspecified address or not.
 
+  ASSERT if Ip6 is NULL.
+
   @param[in] Ip6   - Ip6 address, in network order.
 
   @retval TRUE     - Yes, incoming Ipv6 address is the unspecified address.
@@ -468,6 +480,8 @@ NetIp6IsUnspecifiedAddr (
 /**
   Check whether the incoming Ipv6 address is a link-local address.
 
+  ASSERT if Ip6 is NULL.
+
   @param[in] Ip6   - Ip6 address, in network order.
 
   @retval TRUE  - The incoming Ipv6 address is a link-local address.
@@ -482,6 +496,9 @@ NetIp6IsLinkLocalAddr (
 
 /**
   Check whether the Ipv6 address1 and address2 are on the connected network.
+
+  ASSERT if Ip1 or Ip2 is NULL.
+  ASSERT if PrefixLength exceeds or equals to IP6_PREFIX_MAX.
 
   @param[in] Ip1          - Ip6 address1, in network order.
   @param[in] Ip2          - Ip6 address2, in network order.
@@ -501,6 +518,8 @@ NetIp6IsNetEqual (
 
 /**
   Switches the endianess of an IPv6 address.
+
+  ASSERT if Ip6 is NULL.
 
   This function swaps the bytes in a 128-bit IPv6 address to switch the value
   from little endian to big endian or vice versa. The byte swapped value is
@@ -523,6 +542,7 @@ extern IP4_ADDR gIp4AllMasks[IP4_MASK_NUM];
 extern EFI_IPv4_ADDRESS  mZeroIp4Addr;
 
 #define NET_IS_DIGIT(Ch)            (('0' <= (Ch)) && ((Ch) <= '9'))
+#define NET_IS_HEX(Ch)              ((('0' <= (Ch)) && ((Ch) <= '9')) || (('A' <= (Ch)) && ((Ch) <= 'F')) || (('a' <= (Ch)) && ((Ch) <= 'f')))
 #define NET_ROUNDUP(size, unit)     (((size) + (unit) - 1) & (~((unit) - 1)))
 #define NET_IS_LOWER_CASE_CHAR(Ch)  (('a' <= (Ch)) && ((Ch) <= 'z'))
 #define NET_IS_UPPER_CASE_CHAR(Ch)  (('A' <= (Ch)) && ((Ch) <= 'Z'))
@@ -534,6 +554,8 @@ extern EFI_IPv4_ADDRESS  mZeroIp4Addr;
 
 /**
   Extract a UINT32 from a byte stream.
+
+  ASSERT if Buf is NULL.
 
   This function copies a UINT32 from a byte stream, and then converts it from Network
   byte order to host byte order. Use this function to avoid alignment error.
@@ -551,6 +573,8 @@ NetGetUint32 (
 
 /**
   Puts a UINT32 into the byte stream in network byte order.
+
+  ASSERT if Buf is NULL.
 
   Converts a UINT32 from host byte order to network byte order, then copies it to the
   byte stream.
@@ -668,6 +692,8 @@ NetListRemoveTail (
 /**
   Insert a new node entry after a designated node entry of a doubly linked list.
 
+  ASSERT if PrevEntry or NewEntry is NULL.
+
   Inserts a new node entry designated by NewEntry after the node entry designated by PrevEntry
   of the doubly linked list.
 
@@ -684,6 +710,8 @@ NetListInsertAfter (
 
 /**
   Insert a new node entry before a designated node entry of a doubly linked list.
+
+  ASSERT if PostEntry or NewEntry is NULL.
 
   Inserts a new node entry designated by NewEntry before the node entry designated by PostEntry
   of the doubly linked list.
@@ -830,7 +858,6 @@ NetMapClean (
 
   If Map is NULL, then ASSERT().
 
-
   @param[in]  Map                   The net map to test.
 
   @return TRUE if the netmap is empty, otherwise FALSE.
@@ -844,6 +871,8 @@ NetMapIsEmpty (
 
 /**
   Return the number of the <Key, Value> pairs in the netmap.
+
+  If Map is NULL, then ASSERT().
 
   @param[in]  Map                   The netmap to get the entry number.
 
@@ -864,6 +893,7 @@ NetMapGetCount (
   pairs in the netmap increase by 1.
 
   If Map is NULL, then ASSERT().
+  If Key is NULL, then ASSERT().
 
   @param[in, out]  Map                   The netmap to insert into.
   @param[in]       Key                   The user's key.
@@ -889,6 +919,7 @@ NetMapInsertHead (
   pairs in the netmap increase by 1.
 
   If Map is NULL, then ASSERT().
+  If Key is NULL, then ASSERT().
 
   @param[in, out]  Map                   The netmap to insert into.
   @param[in]       Key                   The user's key.
@@ -913,6 +944,7 @@ NetMapInsertTail (
   item with the key to search. It returns the point to the item contains the Key if found.
 
   If Map is NULL, then ASSERT().
+  If Key is NULL, then ASSERT().
 
   @param[in]  Map                   The netmap to search within.
   @param[in]  Key                   The key to search.
@@ -1158,6 +1190,9 @@ NetLibGetVlanHandle (
 /**
   Get MAC address associated with the network service handle.
 
+  If MacAddress is NULL, then ASSERT().
+  If AddressSize is NULL, then ASSERT().
+
   There should be MNP Service Binding Protocol installed on the input ServiceHandle.
   If SNP is installed on the ServiceHandle or its parent handle, MAC address will
   be retrieved from SNP. If no SNP found, try to get SNP mode data use MNP.
@@ -1182,6 +1217,8 @@ NetLibGetMacAddress (
 /**
   Convert MAC address of the NIC associated with specified Service Binding Handle
   to a unicode string. Callers are responsible for freeing the string storage.
+
+  If MacString is NULL, then ASSERT().
 
   Locate simple network protocol associated with the Service Binding Handle and
   get the mac address from SNP. Then convert the mac address into a unicode
@@ -1211,6 +1248,8 @@ NetLibGetMacString (
 
 /**
   Detect media status for specified network device.
+
+  If MediaPresent is NULL, then ASSERT().
 
   The underlying UNDI driver may or may not support reporting media status from
   GET_STATUS command (PXE_STATFLAGS_GET_STATUS_NO_MEDIA_SUPPORTED). This routine
@@ -1245,7 +1284,42 @@ NetLibDetectMedia (
   );
 
 /**
+  Detect media state for a network device. This routine will wait for a period of time at 
+  a specified checking interval when a certain network is under connecting until connection 
+  process finishes or timeout. If Aip protocol is supported by low layer drivers, three kinds
+  of media states can be detected: EFI_SUCCESS, EFI_NOT_READY and EFI_NO_MEDIA, represents
+  connected state, connecting state and no media state respectively. When function detects 
+  the current state is EFI_NOT_READY, it will loop to wait for next time's check until state 
+  turns to be EFI_SUCCESS or EFI_NO_MEDIA. If Aip protocol is not supported, function will 
+  call NetLibDetectMedia() and return state directly.
+
+  @param[in]   ServiceHandle    The handle where network service binding protocols are
+                                installed on.
+  @param[in]   Timeout          The maximum number of 100ns units to wait when network
+                                is connecting. Zero value means detect once and return
+                                immediately.
+  @param[out]  MediaState       The pointer to the detected media state.
+
+  @retval EFI_SUCCESS           Media detection success.
+  @retval EFI_INVALID_PARAMETER ServiceHandle is not a valid network device handle or 
+                                MediaState pointer is NULL.
+  @retval EFI_DEVICE_ERROR      A device error occurred.
+  @retval EFI_TIMEOUT           Network is connecting but timeout.
+
+**/
+EFI_STATUS
+EFIAPI
+NetLibDetectMediaWaitTimeout (
+  IN  EFI_HANDLE            ServiceHandle,
+  IN  UINT64                Timeout,
+  OUT EFI_STATUS            *MediaState
+  );
+
+
+/**
   Create an IPv4 device path node.
+
+  If Node is NULL, then ASSERT().
 
   The header type of IPv4 device path node is MESSAGING_DEVICE_PATH.
   The header subtype of IPv4 device path node is MSG_IPv4_DP.
@@ -1278,6 +1352,10 @@ NetLibCreateIPv4DPathNode (
 /**
   Create an IPv6 device path node.
 
+  If Node is NULL, then ASSERT().
+  If LocalIp is NULL, then ASSERT().
+  If RemoteIp is NULL, then ASSERT().
+
   The header type of IPv6 device path node is MESSAGING_DEVICE_PATH.
   The header subtype of IPv6 device path node is MSG_IPv6_DP.
   The length of the IPv6 device path node in bytes is 43.
@@ -1307,6 +1385,8 @@ NetLibCreateIPv6DPathNode (
 
 /**
   Find the UNDI/SNP handle from controller and protocol GUID.
+
+  If ProtocolGuid is NULL, then ASSERT().
 
   For example, IP will open an MNP child to transmit/receive
   packets. When MNP is stopped, IP should also be stopped. IP
@@ -1390,7 +1470,6 @@ NetLibAsciiStrToIp6 (
 
   @retval EFI_SUCCESS            Converted to an IPv4 address successfully.
   @retval EFI_INVALID_PARAMETER  The string is mal-formatted or Ip4Address is NULL.
-  @retval EFI_OUT_OF_RESOURCES   Failed to perform the operation due to lack of resources.
 
 **/
 EFI_STATUS
@@ -1409,7 +1488,6 @@ NetLibStrToIp4 (
 
   @retval EFI_SUCCESS            Converted to an IPv6 address successfully.
   @retval EFI_INVALID_PARAMETER  The string is malformatted or Ip6Address is NULL.
-  @retval EFI_OUT_OF_RESOURCES   Failed to perform the operation due to a lack of resources.
 
 **/
 EFI_STATUS
@@ -1430,7 +1508,6 @@ NetLibStrToIp6 (
 
   @retval EFI_SUCCESS            Converted to an  IPv6 address successfully.
   @retval EFI_INVALID_PARAMETER  The string is malformatted, or Ip6Address is NULL.
-  @retval EFI_OUT_OF_RESOURCES   Failed to perform the operation due to a lack of resources.
 
 **/
 EFI_STATUS
@@ -1609,10 +1686,10 @@ typedef struct {
   (sizeof (NET_BUF) + ((BlockOpNum) - 1) * sizeof (NET_BLOCK_OP))
 
 #define NET_HEADSPACE(BlockOp)  \
-  (UINTN)((BlockOp)->Head - (BlockOp)->BlockHead)
+  ((UINTN)((BlockOp)->Head) - (UINTN)((BlockOp)->BlockHead))
 
 #define NET_TAILSPACE(BlockOp)  \
-  (UINTN)((BlockOp)->BlockTail - (BlockOp)->Tail)
+  ((UINTN)((BlockOp)->BlockTail) - (UINTN)((BlockOp)->Tail))
 
 /**
   Allocate a single block NET_BUF. Upon allocation, all the
@@ -2154,6 +2231,8 @@ NetIpSecNetbufFree (
 /**
   This function obtains the system guid from the smbios table.
 
+  If SystemGuid is NULL, then ASSERT().
+
   @param[out]  SystemGuid     The pointer of the returned system guid.
 
   @retval EFI_SUCCESS         Successfully obtained the system guid.
@@ -2167,7 +2246,10 @@ NetLibGetSystemGuid (
   );
 
 /**
-  Create Dns QName according the queried domain name. 
+  Create Dns QName according the queried domain name.
+
+  If DomainName is NULL, then ASSERT().
+
   QName is a domain name represented as a sequence of labels, 
   where each label consists of a length octet followed by that 
   number of octets. The QName terminates with the zero 

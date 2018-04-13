@@ -2,7 +2,7 @@
 This file include all platform action which can be customized
 by IBV/OEM.
 
-Copyright (c) 2015 - 2016, Intel Corporation. All rights reserved.<BR>
+Copyright (c) 2015 - 2017, Intel Corporation. All rights reserved.<BR>
 This program and the accompanying materials
 are licensed and made available under the terms and conditions of the BSD License
 which accompanies this distribution.  The full text of the license may be found at
@@ -14,8 +14,6 @@ WITHOUT WARRANTIES OR REPRESENTATIONS OF ANY KIND, EITHER EXPRESS OR IMPLIED.
 **/
 
 #include "PlatformBootManager.h"
-
-EFI_GUID mUefiShellFileGuid = {0x7C04A583, 0x9E3E, 0x4f1c, {0xAD, 0x65, 0xE0, 0x52, 0x68, 0xD0, 0xB4, 0xD1 }};
 
 /**
   Return the index of the load option in the load option array.
@@ -246,7 +244,7 @@ PlatformBootManagerBeforeConsole (
   //
   // Register UEFI Shell
   //
-  PlatformRegisterFvBootOption (&mUefiShellFileGuid, L"UEFI Shell", LOAD_OPTION_ACTIVE);
+  PlatformRegisterFvBootOption (&gUefiShellFileGuid, L"UEFI Shell", LOAD_OPTION_ACTIVE);
 
   Status = gBS->LocateProtocol(&gEsrtManagementProtocolGuid, NULL, (VOID **)&EsrtManagement);
   if (EFI_ERROR(Status)) {
@@ -356,9 +354,17 @@ PlatformBootManagerAfterConsole (
   }
 
   BootMode = GetBootModeHob();
+
+  DEBUG((DEBUG_INFO, "PlatformBootManagerAfterConsole(): BootMode = %02x\n", BootMode));
+
   switch (BootMode) {
+  case BOOT_ASSUMING_NO_CONFIGURATION_CHANGES:
+  case BOOT_WITH_MINIMAL_CONFIGURATION:
+  case BOOT_ON_S4_RESUME:
+    EfiBootManagerRefreshAllBootOption ();
+    break;
+
   case BOOT_ON_FLASH_UPDATE:
-    DEBUG((DEBUG_INFO, "Capsule Mode detected\n"));
     if (FeaturePcdGet(PcdSupportUpdateCapsuleReset)) {
       EfiBootManagerConnectAll ();
       EfiBootManagerRefreshAllBootOption ();
@@ -376,15 +382,6 @@ PlatformBootManagerAfterConsole (
     }
     break;
 
-  case BOOT_IN_RECOVERY_MODE:
-    DEBUG((DEBUG_INFO, "Recovery Mode detected\n"));
-    // Passthrough
-
-  case BOOT_ASSUMING_NO_CONFIGURATION_CHANGES:
-  case BOOT_WITH_MINIMAL_CONFIGURATION:
-  case BOOT_WITH_FULL_CONFIGURATION:
-  case BOOT_WITH_FULL_CONFIGURATION_PLUS_DIAGNOSTICS:
-  case BOOT_WITH_DEFAULT_SETTINGS:
   default:
     EfiBootManagerConnectAll ();
     EfiBootManagerRefreshAllBootOption ();
@@ -392,14 +389,9 @@ PlatformBootManagerAfterConsole (
     //
     // Sync ESRT Cache from FMP Instance on demand after Connect All
     //
-    if ((BootMode != BOOT_ASSUMING_NO_CONFIGURATION_CHANGES) &&
-        (BootMode != BOOT_WITH_MINIMAL_CONFIGURATION) &&
-        (BootMode != BOOT_ON_S4_RESUME)) {
-      if (EsrtManagement != NULL) {
-        EsrtManagement->SyncEsrtFmp();
-      }
+    if (EsrtManagement != NULL) {
+      EsrtManagement->SyncEsrtFmp();
     }
-
     break;
   }
 

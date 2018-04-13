@@ -1,7 +1,7 @@
 /** @file
   SMM CPU misc functions for x64 arch specific.
   
-Copyright (c) 2015 - 2016, Intel Corporation. All rights reserved.<BR>
+Copyright (c) 2015 - 2018, Intel Corporation. All rights reserved.<BR>
 This program and the accompanying materials
 are licensed and made available under the terms and conditions of the BSD License
 which accompanies this distribution.  The full text of the license may be found at
@@ -13,6 +13,30 @@ WITHOUT WARRANTIES OR REPRESENTATIONS OF ANY KIND, EITHER EXPRESS OR IMPLIED.
 **/
 
 #include "PiSmmCpuDxeSmm.h"
+
+EFI_PHYSICAL_ADDRESS                mGdtBuffer;
+UINTN                               mGdtBufferSize;
+
+/**
+  Initialize IDT for SMM Stack Guard.
+
+**/
+VOID
+EFIAPI
+InitializeIDTSmmStackGuard (
+  VOID
+  )
+{
+  IA32_IDT_GATE_DESCRIPTOR  *IdtGate;
+
+  //
+  // If SMM Stack Guard feature is enabled, set the IST field of
+  // the interrupt gate for Page Fault Exception to be 1
+  //
+  IdtGate = (IA32_IDT_GATE_DESCRIPTOR *)gcSmiIdtr.Base;
+  IdtGate += EXCEPT_IA32_PAGE_FAULT;
+  IdtGate->Bits.Reserved_0 = 1;
+}
 
 /**
   Initialize Gdt for all processors.
@@ -41,8 +65,10 @@ InitGdt (
   // on each SMI entry.
   //
   GdtTssTableSize = (gcSmiGdtr.Limit + 1 + TSS_SIZE + 7) & ~7; // 8 bytes aligned
-  GdtTssTables = (UINT8*)AllocatePages (EFI_SIZE_TO_PAGES (GdtTssTableSize * gSmmCpuPrivate->SmmCoreEntryContext.NumberOfCpus));
+  mGdtBufferSize = GdtTssTableSize * gSmmCpuPrivate->SmmCoreEntryContext.NumberOfCpus;
+  GdtTssTables = (UINT8*)AllocateCodePages (EFI_SIZE_TO_PAGES (mGdtBufferSize));
   ASSERT (GdtTssTables != NULL);
+  mGdtBuffer = (UINTN)GdtTssTables;
   GdtTableStepSize = GdtTssTableSize;
 
   for (Index = 0; Index < gSmmCpuPrivate->SmmCoreEntryContext.NumberOfCpus; Index++) {
@@ -103,29 +129,28 @@ GetProtectedModeCS (
 /**
   Transfer AP to safe hlt-loop after it finished restore CPU features on S3 patch.
 
-  @param[in] ApHltLoopCode    The 32-bit address of the safe hlt-loop function.
-  @param[in] TopOfStack       A pointer to the new stack to use for the ApHltLoopCode.
-  @param[in] NumberToFinish   Semaphore of APs finish count.
+  @param[in] ApHltLoopCode          The address of the safe hlt-loop function.
+  @param[in] TopOfStack             A pointer to the new stack to use for the ApHltLoopCode.
+  @param[in] NumberToFinishAddress  Address of Semaphore of APs finish count.
 
 **/
 VOID
 TransferApToSafeState (
-  IN UINT32             ApHltLoopCode,
-  IN UINT32             TopOfStack,
-  IN UINT32             *NumberToFinish
+  IN UINTN  ApHltLoopCode,
+  IN UINTN  TopOfStack,
+  IN UINTN  NumberToFinishAddress
   )
 {
   AsmDisablePaging64 (
     GetProtectedModeCS (),
-    (UINT32) (UINTN) ApHltLoopCode,
-    (UINT32) (UINTN) NumberToFinish,
+    (UINT32)ApHltLoopCode,
+    (UINT32)NumberToFinishAddress,
     0,
-    TopOfStack
+    (UINT32)TopOfStack
     );
   //
   // It should never reach here
   //
   ASSERT (FALSE);
 }
-
 

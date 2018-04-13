@@ -1,5 +1,5 @@
 ;------------------------------------------------------------------------------ ;
-; Copyright (c) 2015 - 2016, Intel Corporation. All rights reserved.<BR>
+; Copyright (c) 2015 - 2018, Intel Corporation. All rights reserved.<BR>
 ; This program and the accompanying materials
 ; are licensed and made available under the terms and conditions of the BSD License
 ; which accompanies this distribution.  The full text of the license may be found at
@@ -52,16 +52,13 @@ BITS 16
     mov        si,  BufferStartLocation
     mov        ebx, [si]
 
-    mov        di,  ModeOffsetLocation
-    mov        eax, [di]
-    mov        di,  CodeSegmentLocation
-    mov        edx, [di]
-    mov        di,  ax
-    sub        di,  02h
-    mov        [di],dx                         ; Patch long mode CS
-    sub        di,  04h
-    add        eax, ebx
-    mov        [di],eax                        ; Patch address
+    mov        si,  DataSegmentLocation
+    mov        edx, [si]
+
+    ;
+    ; Get start address of 32-bit code in low memory (<1MB)
+    ;
+    mov        edi, ModeTransitionMemoryLocation
 
     mov        si, GdtrLocation
 o32 lgdt       [cs:si]
@@ -69,57 +66,91 @@ o32 lgdt       [cs:si]
     mov        si, IdtrLocation
 o32 lidt       [cs:si]
 
-    mov        si, EnableExecuteDisableLocation
-    cmp        byte [si], 0
-    jz         SkipEnableExecuteDisableBit
+    ;
+    ; Switch to protected mode
+    ;
+    mov        eax, cr0                    ; Get control register 0
+    or         eax, 000000003h             ; Set PE bit (bit #0) & MP
+    mov        cr0, eax
+
+    ; Switch to 32-bit code (>1MB)
+o32 jmp far    [cs:di]
+
+;
+; Following code must be copied to memory with type of EfiBootServicesCode.
+; This is required if NX is enabled for EfiBootServicesCode of memory.
+;
+BITS 32
+Flat32Start:                                   ; protected mode entry point
+    mov        ds, dx
+    mov        es, dx
+    mov        fs, dx
+    mov        gs, dx
+    mov        ss, dx
 
     ;
     ; Enable execute disable bit
     ;
+    mov        esi, EnableExecuteDisableLocation
+    cmp        byte [ebx + esi], 0
+    jz         SkipEnableExecuteDisableBit
+
     mov        ecx, 0c0000080h             ; EFER MSR number
     rdmsr                                  ; Read EFER
     bts        eax, 11                     ; Enable Execute Disable Bit
     wrmsr                                  ; Write EFER
 
 SkipEnableExecuteDisableBit:
-
-    mov        di,  DataSegmentLocation
-    mov        edi, [di]                   ; Save long mode DS in edi
-
-    mov        si, Cr3Location             ; Save CR3 in ecx
-    mov        ecx, [si]
-
-    xor        ax,  ax
-    mov        ds,  ax                     ; Clear data segment
-
-    mov        eax, cr0                    ; Get control register 0
-    or         eax, 000000003h             ; Set PE bit (bit #0) & MP
-    mov        cr0, eax
-
+    ;
+    ; Enable PAE
+    ;
     mov        eax, cr4
     bts        eax, 5
     mov        cr4, eax
 
+    ;
+    ; Load page table
+    ;
+    mov        esi, Cr3Location             ; Save CR3 in ecx
+    mov        ecx, [ebx + esi]
     mov        cr3, ecx                    ; Load CR3
 
+    ;
+    ; Enable long mode
+    ;
     mov        ecx, 0c0000080h             ; EFER MSR number
     rdmsr                                  ; Read EFER
     bts        eax, 8                      ; Set LME=1
     wrmsr                                  ; Write EFER
 
+    ;
+    ; Enable paging
+    ;
     mov        eax, cr0                    ; Read CR0
     bts        eax, 31                     ; Set PG=1
     mov        cr0, eax                    ; Write CR0
 
-    jmp        0:strict dword 0  ; far jump to long mode
+    ;
+    ; Far jump to 64-bit code
+    ;
+    mov        edi, ModeHighMemoryLocation
+    add        edi, ebx
+    jmp far    [edi]
+
 BITS 64
 LongModeStart:
-    mov        eax, edi
-    mov        ds,  ax
-    mov        es,  ax
-    mov        ss,  ax
-
     mov        esi, ebx
+    lea        edi, [esi + InitFlagLocation]
+    cmp        qword [edi], 1       ; ApInitConfig
+    jnz        GetApicId
+
+    ; Increment the number of APs executing here as early as possible
+    ; This is decremented in C code when AP is finished executing
+    mov        edi, esi
+    add        edi, NumApsExecutingLocation
+    lock inc   dword [edi]
+
+    ; AP init
     mov        edi, esi
     add        edi, LockLocation
     mov        rax, NotVacantFlag
@@ -129,26 +160,66 @@ TestLock:
     cmp        rax, NotVacantFlag
     jz         TestLock
 
-    mov        edi, esi
-    add        edi, NumApsExecutingLocation
-    inc        dword [edi]
-    mov        ebx, [edi]
+    lea        ecx, [esi + ApIndexLocation]
+    inc        dword [ecx]
+    mov        ebx, [ecx]
 
-ProgramStack:
+Releaselock:
+    mov        rax, VacantFlag
+    xchg       qword [edi], rax
+    ; program stack
     mov        edi, esi
     add        edi, StackSizeLocation
-    mov        rax, qword [edi]
+    mov        eax, dword [edi]
+    mov        ecx, ebx
+    inc        ecx
+    mul        ecx                               ; EAX = StackSize * (CpuNumber + 1)
     mov        edi, esi
     add        edi, StackStartAddressLocation
     add        rax, qword [edi]
     mov        rsp, rax
-    mov        qword [edi], rax
+    jmp        CProcedureInvoke
 
-Releaselock:
-    mov        rax, VacantFlag
-    mov        edi, esi
-    add        edi, LockLocation
-    xchg       qword [edi], rax
+GetApicId:
+    mov        eax, 0
+    cpuid
+    cmp        eax, 0bh
+    jb         NoX2Apic             ; CPUID level below CPUID_EXTENDED_TOPOLOGY
+
+    mov        eax, 0bh
+    xor        ecx, ecx
+    cpuid
+    test       ebx, 0ffffh
+    jz         NoX2Apic             ; CPUID.0BH:EBX[15:0] is zero
+
+    ; Processor is x2APIC capable; 32-bit x2APIC ID is already in EDX
+    jmp        GetProcessorNumber
+
+NoX2Apic:
+    ; Processor is not x2APIC capable, so get 8-bit APIC ID
+    mov        eax, 1
+    cpuid
+    shr        ebx, 24
+    mov        edx, ebx
+
+GetProcessorNumber:
+    ;
+    ; Get processor number for this AP
+    ; Note that BSP may become an AP due to SwitchBsp()
+    ;
+    xor         ebx, ebx
+    lea         eax, [esi + CpuInfoLocation]
+    mov         edi, [eax]
+
+GetNextProcNumber:
+    cmp         dword [edi], edx                      ; APIC ID match?
+    jz          ProgramStack
+    add         edi, 20
+    inc         ebx
+    jmp         GetNextProcNumber    
+
+ProgramStack:
+    mov         rsp, qword [edi + 12]
 
 CProcedureInvoke:
     push       rbp               ; Push BIST data at top of AP stack
@@ -156,12 +227,12 @@ CProcedureInvoke:
     push       rbp
     mov        rbp, rsp
 
-    mov        rax, ASM_PFX(InitializeFloatingPointUnits)
+    mov        rax, qword [esi + InitializeFloatingPointUnitsAddress]
     sub        rsp, 20h
     call       rax               ; Call assembly function to initialize FPU per UEFI spec
     add        rsp, 20h
 
-    mov        edx, ebx          ; edx is NumApsExecuting
+    mov        edx, ebx          ; edx is ApIndex
     mov        ecx, esi
     add        ecx, LockLocation ; rcx is address of exchange info data buffer
 
@@ -177,11 +248,15 @@ CProcedureInvoke:
 RendezvousFunnelProcEnd:
 
 ;-------------------------------------------------------------------------------------
-;  AsmRelocateApLoop (MwaitSupport, ApTargetCState, PmCodeSegment);
+;  AsmRelocateApLoop (MwaitSupport, ApTargetCState, PmCodeSegment, TopOfApStack, CountTofinish);
 ;-------------------------------------------------------------------------------------
 global ASM_PFX(AsmRelocateApLoop)
 ASM_PFX(AsmRelocateApLoop):
 AsmRelocateApLoopStart:
+    cli                          ; Disable interrupt before switching to 32-bit mode
+    mov        rax, [rsp + 40]   ; CountTofinish
+    lock dec   dword [rax]       ; (*CountTofinish)--
+    mov        rsp, r9
     push       rcx
     push       rdx
 
@@ -214,19 +289,19 @@ PmEntry:
     jnz        HltLoop
     mov        ebx, edx           ; Save C-State to ebx
 MwaitLoop:
+    cli
     mov        eax, esp           ; Set Monitor Address
     xor        ecx, ecx           ; ecx = 0
     xor        edx, edx           ; edx = 0
     monitor
-    shl        ebx, 4
     mov        eax, ebx           ; Mwait Cx, Target C-State per eax[7:4]
+    shl        eax, 4
     mwait
     jmp        MwaitLoop
 HltLoop:
     cli
     hlt
     jmp        HltLoop
-    ret
 BITS 64
 AsmRelocateApLoopEnd:
 
@@ -235,13 +310,14 @@ AsmRelocateApLoopEnd:
 ;-------------------------------------------------------------------------------------
 global ASM_PFX(AsmGetAddressMap)
 ASM_PFX(AsmGetAddressMap):
-    mov        rax, ASM_PFX(RendezvousFunnelProc)
+    lea        rax, [ASM_PFX(RendezvousFunnelProc)]
     mov        qword [rcx], rax
     mov        qword [rcx +  8h], LongModeStart - RendezvousFunnelProcStart
     mov        qword [rcx + 10h], RendezvousFunnelProcEnd - RendezvousFunnelProcStart
-    mov        rax, ASM_PFX(AsmRelocateApLoop)
+    lea        rax, [ASM_PFX(AsmRelocateApLoop)]
     mov        qword [rcx + 18h], rax
     mov        qword [rcx + 20h], AsmRelocateApLoopEnd - AsmRelocateApLoopStart
+    mov        qword [rcx + 28h], Flat32Start - RendezvousFunnelProcStart
     ret
 
 ;-------------------------------------------------------------------------------------

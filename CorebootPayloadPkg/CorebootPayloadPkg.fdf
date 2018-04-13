@@ -3,7 +3,7 @@
 #
 # Provides drivers and definitions to create uefi payload for coreboot.
 #
-# Copyright (c) 2014 - 2016, Intel Corporation. All rights reserved.<BR>
+# Copyright (c) 2014 - 2017, Intel Corporation. All rights reserved.<BR>
 # This program and the accompanying materials are licensed and made available under
 # the terms and conditions of the BSD License that accompanies this distribution.
 # The full text of the license may be found at
@@ -78,6 +78,12 @@ READ_ENABLED_CAP   = TRUE
 READ_STATUS        = TRUE
 READ_LOCK_CAP      = TRUE
 READ_LOCK_STATUS   = TRUE
+
+APRIORI DXE {
+  INF  MdeModulePkg/Universal/PCD/Dxe/Pcd.inf
+  INF  MdeModulePkg/Universal/ReportStatusCodeRouter/RuntimeDxe/ReportStatusCodeRouterRuntimeDxe.inf
+  INF  MdeModulePkg/Universal/StatusCodeHandler/RuntimeDxe/StatusCodeHandlerRuntimeDxe.inf
+}
 
 #
 # DXE Phase modules
@@ -174,6 +180,8 @@ INF QuarkSocPkg/QuarkSouthCluster/Usb/Ohci/Dxe/OhciDxe.inf
 # Shell
 #
 !if $(SHELL_TYPE) == BUILD_SHELL
+INF ShellPkg/DynamicCommand/TftpDynamicCommand/TftpDynamicCommand.inf
+INF ShellPkg/DynamicCommand/DpDynamicCommand/DpDynamicCommand.inf
 INF ShellPkg/Application/Shell/Shell.inf
 !endif
 

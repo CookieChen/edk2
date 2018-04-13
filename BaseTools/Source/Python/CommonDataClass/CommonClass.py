@@ -44,11 +44,11 @@ def GenerateHelpText(Text, Lang):
 class CommonClass(object):
     def __init__(self, Usage = None, FeatureFlag = '', SupArchList = None, HelpText = ''):
         self.Usage = Usage
-        if self.Usage == None:
+        if self.Usage is None:
             self.Usage = []
         self.FeatureFlag = FeatureFlag
         self.SupArchList = SupArchList
-        if self.SupArchList == None:
+        if self.SupArchList is None:
             self.SupArchList = []
         self.HelpText = HelpText
         self.HelpTextList = []
@@ -174,7 +174,7 @@ class IncludeStatementClass(object):
 # @var GuidTypeList:   To store value for GuidTypeList, selection scope is in below list
 #                      DATA_HUB_RECORD | EFI_EVENT | EFI_SYSTEM_CONFIGURATION_TABLE | EFI_VARIABLE | GUID | HII_PACKAGE_LIST | HOB | TOKEN_SPACE_GUID
 # @var SupModuleList:  To store value for SupModuleList, selection scope is in below list
-#                      BASE | SEC | PEI_CORE | PEIM | DXE_CORE | DXE_DRIVER | DXE_RUNTIME_DRIVER | DXE_SAL_DRIVER | DXE_SMM_DRIVER | UEFI_DRIVER | UEFI_APPLICATION | USER_DEFINED | SMM_CORE
+#                      BASE | SEC | PEI_CORE | PEIM | DXE_CORE | DXE_DRIVER | DXE_RUNTIME_DRIVER | DXE_SAL_DRIVER | DXE_SMM_DRIVER | UEFI_DRIVER | UEFI_APPLICATION | USER_DEFINED | SMM_CORE | MM_STANDALONE | MM_CORE_STANDALONE
 #
 class GuidProtocolPpiCommonClass(CommonClass):
     def __init__(self):
@@ -202,7 +202,7 @@ class GuidProtocolPpiCommonClass(CommonClass):
 # @var RecommendedInstance:         To store value for RecommendedInstance, selection scope is in below list
 #                                   DATA_HUB_RECORD | EFI_EVENT | EFI_SYSTEM_CONFIGURATION_TABLE | EFI_VARIABLE | GUID | HII_PACKAGE_LIST | HOB | TOKEN_SPACE_GUID
 # @var SupModuleList:               To store value for SupModuleList, selection scope is in below list
-#                                   BASE | SEC | PEI_CORE | PEIM | DXE_CORE | DXE_DRIVER | DXE_RUNTIME_DRIVER | DXE_SAL_DRIVER | DXE_SMM_DRIVER | UEFI_DRIVER | UEFI_APPLICATION | USER_DEFINED | SMM_CORE
+#                                   BASE | SEC | PEI_CORE | PEIM | DXE_CORE | DXE_DRIVER | DXE_RUNTIME_DRIVER | DXE_SAL_DRIVER | DXE_SMM_DRIVER | UEFI_DRIVER | UEFI_APPLICATION | USER_DEFINED | SMM_CORE | MM_STANDALONE | MM_CORE_STANDALONE
 #
 class LibraryClassClass(CommonClass, DefineClass):
     def __init__(self):
@@ -270,19 +270,22 @@ class PpiClass(GuidProtocolPpiCommonClass):
 #
 class SkuInfoClass(object):
     def __init__(self, SkuIdName = '', SkuId = '', VariableName = '', VariableGuid = '', VariableOffset = '', 
-                 HiiDefaultValue = '', VpdOffset = '', DefaultValue = '', VariableGuidValue = '', VariableAttribute = ''):
+                 HiiDefaultValue = '', VpdOffset = '', DefaultValue = '', VariableGuidValue = '', VariableAttribute = '', DefaultStore = None):
         self.SkuIdName = SkuIdName
         self.SkuId = SkuId
         
         #
         # Used by Hii
         #
+        if DefaultStore is None:
+            DefaultStore = {}
         self.VariableName = VariableName
         self.VariableGuid = VariableGuid
         self.VariableGuidValue = VariableGuidValue
         self.VariableOffset = VariableOffset
         self.HiiDefaultValue = HiiDefaultValue
         self.VariableAttribute = VariableAttribute
+        self.DefaultStoreDict = DefaultStore
         
         #
         # Used by Vpd
@@ -354,7 +357,7 @@ class PcdErrorClass(object):
 # @var SkuInfoList:            To store value for SkuInfoList
 #                              It is a set structure as { [SkuIdName] : SkuInfoClass } 
 # @var SupModuleList:          To store value for SupModuleList, selection scope is in below list
-#                              BASE | SEC | PEI_CORE | PEIM | DXE_CORE | DXE_DRIVER | DXE_RUNTIME_DRIVER | DXE_SAL_DRIVER | DXE_SMM_DRIVER | UEFI_DRIVER | UEFI_APPLICATION | USER_DEFINED | SMM_CORE
+#                              BASE | SEC | PEI_CORE | PEIM | DXE_CORE | DXE_DRIVER | DXE_RUNTIME_DRIVER | DXE_SAL_DRIVER | DXE_SMM_DRIVER | UEFI_DRIVER | UEFI_APPLICATION | USER_DEFINED | SMM_CORE | MM_STANDALONE | MM_CORE_STANDALONE
 #
 class PcdClass(CommonClass):
     def __init__(self, CName = '', Token = '', TokenSpaceGuidCName = '', DatumType = '', MaxDatumSize = '', DefaultValue = '', ItemType = '', ValidUsage = None, SkuInfoList = None, SupModuleList = None):
@@ -372,13 +375,13 @@ class PcdClass(CommonClass):
         self.PcdCName = ''
         self.Value = ''
         self.Offset = ''
-        if self.ValidUsage == None:
+        if self.ValidUsage is None:
             self.ValidUsage = []
         self.SkuInfoList = SkuInfoList
-        if self.SkuInfoList  == None:
+        if self.SkuInfoList  is None:
             self.SkuInfoList  = {}
         self.SupModuleList = SupModuleList
-        if self.SupModuleList == None:
+        if self.SupModuleList is None:
             self.SupModuleList = []
         CommonClass.__init__(self)
         self.PcdErrors = []

@@ -34,6 +34,10 @@
 
 #define MMC_OCR_POWERUP             0x80000000
 
+#define MMC_OCR_ACCESS_MASK         0x3     /* bit[30-29] */
+#define MMC_OCR_ACCESS_BYTE         0x1     /* bit[29] */
+#define MMC_OCR_ACCESS_SECTOR       0x2     /* bit[30] */
+
 #define MMC_CSD_GET_CCC(Response)    (Response[2] >> 20)
 #define MMC_CSD_GET_TRANSPEED(Response)    (Response[3] & 0xFF)
 #define MMC_CSD_GET_READBLLEN(Response)    ((Response[2] >> 16) & 0xF)
@@ -55,6 +59,19 @@
 #define MMC_R0_STATE_TRAN       4
 #define MMC_R0_STATE_DATA       5
 
+#define EMMC_CMD6_ARG_ACCESS(x)             (((x) & 0x3) << 24)
+#define EMMC_CMD6_ARG_INDEX(x)              (((x) & 0xFF) << 16)
+#define EMMC_CMD6_ARG_VALUE(x)              (((x) & 0xFF) << 8)
+#define EMMC_CMD6_ARG_CMD_SET(x)            (((x) & 0x7) << 0)
+
+#define SWITCH_CMD_DATA_LENGTH              64
+#define SD_HIGH_SPEED_SUPPORTED             0x20000
+#define SD_DEFAULT_SPEED                    25000000
+#define SD_HIGH_SPEED                       50000000
+#define SWITCH_CMD_SUCCESS_MASK             0x0f000000
+
+#define BUSWIDTH_4                          4
+
 typedef enum {
   UNKNOWN_CARD,
   MMC_CARD,              //MMC card
@@ -74,6 +91,22 @@ typedef struct {
   UINT32  AccessMode:  2; // 00b (byte mode), 10b (sector mode)
   UINT32  PowerUp:     1; // This bit is set to LOW if the card has not finished the power up routine
 } OCR;
+
+typedef struct {
+  UINT8   SD_SPEC:               4; // SD Memory Card - Spec. Version [59:56]
+  UINT8   SCR_STRUCTURE:         4; // SCR Structure [63:60]
+  UINT8   SD_BUS_WIDTHS:         4; // DAT Bus widths supported [51:48]
+  UINT8   DATA_STAT_AFTER_ERASE: 1; // Data Status after erases [55]
+  UINT8   SD_SECURITY:           3; // CPRM Security Support [54:52]
+  UINT8   EX_SECURITY_1:         1; // Extended Security Support [43]
+  UINT8   SD_SPEC4:              1; // Spec. Version 4.00 or higher [42]
+  UINT8   RESERVED_1:            2; // Reserved [41:40]
+  UINT8   SD_SPEC3:              1; // Spec. Version 3.00 or higher [47]
+  UINT8   EX_SECURITY_2:         3; // Extended Security Support [46:44]
+  UINT8   CMD_SUPPORT:           4; // Command Support bits [35:32]
+  UINT8   RESERVED_2:            4; // Reserved [39:36]
+  UINT32  RESERVED_3;               // Manufacturer Usage [31:0]
+} SCR;
 
 typedef struct {
   UINT32  NOT_USED;   // 1 [0:0]
@@ -294,7 +327,7 @@ typedef struct  {
   OCR       OCRData;
   CID       CIDData;
   CSD       CSDData;
-  ECSD      ECSDData;                         // MMC V4 extended card specific
+  ECSD      *ECSDData;                         // MMC V4 extended card specific
 } CARD_INFO;
 
 typedef struct _MMC_HOST_INSTANCE {

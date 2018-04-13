@@ -18,6 +18,7 @@ WITHOUT WARRANTIES OR REPRESENTATIONS OF ANY KIND, EITHER EXPRESS OR IMPLIED.
 
 #include "EbcInt.h"
 #include "EbcExecute.h"
+#include "EbcDebuggerHook.h"
 
 //
 // Amount of space that is not used in the stack
@@ -225,6 +226,7 @@ EbcInterpret (
   //
   // Begin executing the EBC code
   //
+  EbcDebuggerHookEbcInterpret (&VmContext);
   EbcExecute (&VmContext);
 
   //
@@ -336,6 +338,7 @@ ExecuteEbcImageEntryPoint (
   //
   // Begin executing the EBC code
   //
+  EbcDebuggerHookExecuteEbcImageEntryPoint (&VmContext);
   EbcExecute (&VmContext);
 
   //
@@ -380,7 +383,7 @@ EbcCreateThunks (
     return EFI_INVALID_PARAMETER;
   }
 
-  InstructionBuffer = AllocatePool (sizeof (EBC_INSTRUCTION_BUFFER));
+  InstructionBuffer = EbcAllocatePoolForThunk (sizeof (EBC_INSTRUCTION_BUFFER));
   if (InstructionBuffer == NULL) {
     return EFI_OUT_OF_RESOURCES;
   }

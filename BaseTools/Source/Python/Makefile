@@ -1,7 +1,7 @@
 ## @file
 # Windows makefile for Python tools build.
 #
-# Copyright (c) 2010 - 2016, Intel Corporation. All rights reserved.<BR>
+# Copyright (c) 2010 - 2018, Intel Corporation. All rights reserved.<BR>
 # This program and the accompanying materials
 # are licensed and made available under the terms and conditions of the BSD License
 # which accompanies this distribution.  The full text of the license may be found at
@@ -37,18 +37,11 @@ APPLICATIONS=$(BIN_DIR)\build.exe $(BIN_DIR)\GenFds.exe $(BIN_DIR)\Trim.exe $(BI
 COMMON_PYTHON=$(BASE_TOOLS_PATH)\Source\Python\Common\BuildToolError.py \
               $(BASE_TOOLS_PATH)\Source\Python\Common\Database.py \
               $(BASE_TOOLS_PATH)\Source\Python\Common\DataType.py \
-              $(BASE_TOOLS_PATH)\Source\Python\Common\DecClassObject.py \
-              $(BASE_TOOLS_PATH)\Source\Python\Common\Dictionary.py \
-              $(BASE_TOOLS_PATH)\Source\Python\Common\DscClassObject.py \
               $(BASE_TOOLS_PATH)\Source\Python\Common\EdkIIWorkspace.py \
-              $(BASE_TOOLS_PATH)\Source\Python\Common\EdkIIWorkspaceBuild.py \
               $(BASE_TOOLS_PATH)\Source\Python\Common\EdkLogger.py \
               $(BASE_TOOLS_PATH)\Source\Python\Common\Expression.py \
-              $(BASE_TOOLS_PATH)\Source\Python\Common\FdfClassObject.py \
-              $(BASE_TOOLS_PATH)\Source\Python\Common\FdfParserLite.py \
               $(BASE_TOOLS_PATH)\Source\Python\Common\GlobalData.py \
               $(BASE_TOOLS_PATH)\Source\Python\Common\Identification.py \
-              $(BASE_TOOLS_PATH)\Source\Python\Common\InfClassObject.py \
               $(BASE_TOOLS_PATH)\Source\Python\Common\LongFilePathOs.py \
               $(BASE_TOOLS_PATH)\Source\Python\Common\LongFilePathOsPath.py \
               $(BASE_TOOLS_PATH)\Source\Python\Common\LongFilePathSupport.py \
@@ -88,6 +81,9 @@ COMMON_PYTHON=$(BASE_TOOLS_PATH)\Source\Python\Common\BuildToolError.py \
               $(BASE_TOOLS_PATH)\Source\Python\Workspace\MetaFileTable.py \
               $(BASE_TOOLS_PATH)\Source\Python\Workspace\WorkspaceCommon.py \
               $(BASE_TOOLS_PATH)\Source\Python\Workspace\WorkspaceDatabase.py \
+              $(BASE_TOOLS_PATH)\Source\Python\Workspace\DecBuildData.py \
+              $(BASE_TOOLS_PATH)\Source\Python\Workspace\DscBuildData.py \
+              $(BASE_TOOLS_PATH)\Source\Python\Workspace\InfBuildData.py \
               $(BASE_TOOLS_PATH)\Source\Python\AutoGen\AutoGen.py \
               $(BASE_TOOLS_PATH)\Source\Python\AutoGen\BuildEngine.py \
               $(BASE_TOOLS_PATH)\Source\Python\AutoGen\GenC.py \
@@ -98,6 +94,7 @@ COMMON_PYTHON=$(BASE_TOOLS_PATH)\Source\Python\Common\BuildToolError.py \
               $(BASE_TOOLS_PATH)\Source\Python\AutoGen\StrGather.py \
               $(BASE_TOOLS_PATH)\Source\Python\AutoGen\UniClassObject.py \
               $(BASE_TOOLS_PATH)\Source\Python\AutoGen\ValidCheckingInfoObject.py \
+              $(BASE_TOOLS_PATH)\Source\Python\AutoGen\GenVar.py \
               $(BASE_TOOLS_PATH)\Source\Python\Common\RangeExpression.py \
               $(BASE_TOOLS_PATH)\Source\Python\Common\VariableAttributes.py
 

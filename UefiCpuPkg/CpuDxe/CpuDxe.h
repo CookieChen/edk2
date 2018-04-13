@@ -1,7 +1,7 @@
 /** @file
   CPU DXE Module to produce CPU ARCH Protocol and CPU MP Protocol.
 
-  Copyright (c) 2008 - 2016, Intel Corporation. All rights reserved.<BR>
+  Copyright (c) 2008 - 2017, Intel Corporation. All rights reserved.<BR>
   This program and the accompanying materials
   are licensed and made available under the terms and conditions of the BSD License
   which accompanies this distribution.  The full text of the license may be found at
@@ -19,6 +19,7 @@
 
 #include <Protocol/Cpu.h>
 #include <Protocol/MpService.h>
+#include <Register/Msr.h>
 
 #include <Ppi/SecPlatformInformation.h>
 #include <Ppi/SecPlatformInformation2.h>
@@ -39,6 +40,7 @@
 #include <Library/HobLib.h>
 #include <Library/ReportStatusCodeLib.h>
 #include <Library/MpInitLib.h>
+#include <Library/TimerLib.h>
 
 #include <Guid/IdleLoopEvent.h>
 #include <Guid/VectorHandoffTable.h>
@@ -50,6 +52,10 @@
                                        EFI_MEMORY_UCE   \
                                        )
 
+#define EFI_MEMORY_PAGETYPE_MASK      (EFI_MEMORY_RP  | \
+                                       EFI_MEMORY_XP  | \
+                                       EFI_MEMORY_RO    \
+                                       )
 
 /**
   Flush CPU data cache. If the instruction cache is fully coherent
@@ -258,6 +264,16 @@ EFIAPI
 SetDataSelectors (
   UINT16 Selector
   );
+
+/**
+  Update GCD memory space attributes according to current page table setup.
+**/
+VOID
+RefreshGcdMemoryAttributesFromPaging (
+  VOID
+  );
+
+extern BOOLEAN mIsAllocatingPageTable;
 
 #endif
 

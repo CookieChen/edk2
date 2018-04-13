@@ -2,7 +2,7 @@
 This file contains functions required to generate a boot strap file (BSF) also 
 known as the Volume Top File (VTF)
 
-Copyright (c) 1999 - 2016, Intel Corporation. All rights reserved.<BR>
+Copyright (c) 1999 - 2017, Intel Corporation. All rights reserved.<BR>
 This program and the accompanying materials are licensed and made available 
 under the terms and conditions of the BSD License which accompanies this 
 distribution.  The full text of the license may be found at
@@ -129,9 +129,9 @@ Returns:
   } else {
     Length = strlen(Str);
     if (Length < 4) {
-      strncpy (TemStr + 4 - Length, Str, Length);
+      memcpy (TemStr + 4 - Length, Str, Length);
     } else {
-      strncpy (TemStr, Str + Length - 4, 4);
+      memcpy (TemStr, Str + Length - 4, 4);
     }
   
     sscanf (
@@ -362,10 +362,20 @@ Returns:
       }
     } else if (strnicmp (*TokenStr, "COMP_BIN", 8) == 0) {
       TokenStr++;
-      strcpy (VtfInfo->CompBinName, *TokenStr);
+      if (strlen (*TokenStr) >= FILE_NAME_SIZE) {
+        Error (NULL, 0, 3000, "Invalid", "The 'COMP_BIN' name is too long.");
+        return ;
+      }
+      strncpy (VtfInfo->CompBinName, *TokenStr, FILE_NAME_SIZE - 1);
+      VtfInfo->CompBinName[FILE_NAME_SIZE - 1] = 0;
     } else if (strnicmp (*TokenStr, "COMP_SYM", 8) == 0) {
       TokenStr++;
-      strcpy (VtfInfo->CompSymName, *TokenStr);
+      if (strlen (*TokenStr) >= FILE_NAME_SIZE) {
+        Error (NULL, 0, 3000, "Invalid", "The 'COMP_SYM' name is too long.");
+        return ;
+      }
+      strncpy (VtfInfo->CompSymName, *TokenStr, FILE_NAME_SIZE - 1);
+      VtfInfo->CompSymName[FILE_NAME_SIZE - 1] = 0;
     } else if (strnicmp (*TokenStr, "COMP_SIZE", 9) == 0) {
       TokenStr++;
       if (strnicmp (*TokenStr, "-", 1) == 0) {
@@ -444,14 +454,24 @@ Returns:
     if (SectionOptionFlag) {
       if (stricmp (*TokenStr, "IA32_RST_BIN") == 0) {
         TokenStr++;
-        strcpy (IA32BinFile, *TokenStr);
+        if (strlen (*TokenStr) >= FILE_NAME_SIZE) {
+          Error (NULL, 0, 3000, "Invalid", "The 'IA32_RST_BIN' name is too long.");
+          break;
+        }
+        strncpy (IA32BinFile, *TokenStr, FILE_NAME_SIZE - 1);
+        IA32BinFile[FILE_NAME_SIZE - 1] = 0;
       }
     }
 
     if (SectionCompFlag) {
       if (stricmp (*TokenStr, "COMP_NAME") == 0) {
         TokenStr++;
-        strcpy (FileListPtr->CompName, *TokenStr);
+        if (strlen (*TokenStr) >= COMPONENT_NAME_SIZE) {
+          Error (NULL, 0, 3000, "Invalid", "The 'COMP_NAME' name is too long.");
+          break;
+        }
+        strncpy (FileListPtr->CompName, *TokenStr, COMPONENT_NAME_SIZE - 1);
+        FileListPtr->CompName[COMPONENT_NAME_SIZE - 1] = 0;
         TokenStr++;
         ParseAndUpdateComponents (FileListPtr);
       }
@@ -1045,7 +1065,6 @@ Arguments:
 Returns:
 
   EFI_INVALID_PARAMETER  - The parameter is invalid
-  EFI_OUT_OF_RESOURCES   - Resource can not be allocated
   EFI_SUCCESS            - The function completed successfully
 
 --*/
@@ -1063,8 +1082,7 @@ Returns:
   CHAR8   Buff4[10];
   CHAR8   Buff5[10];
   CHAR8   Token[50];
-  CHAR8   *FormatString;
-  INTN    FormatLength;
+  CHAR8   FormatString[MAX_LINE_LEN];
 
   Fp = fopen (LongFilePath (VtfInfo->CompSymName), "rb");
 
@@ -1076,30 +1094,8 @@ Returns:
   //
   // Generate the format string for fscanf
   //
-  FormatLength = snprintf (
-                   NULL,
-                   0,
-                   "%%%us %%%us %%%us %%%us %%%us %%%us %%%us",
-                   (unsigned) sizeof (Buff1) - 1,
-                   (unsigned) sizeof (Buff2) - 1,
-                   (unsigned) sizeof (OffsetStr) - 1,
-                   (unsigned) sizeof (Buff3) - 1,
-                   (unsigned) sizeof (Buff4) - 1,
-                   (unsigned) sizeof (Buff5) - 1,
-                   (unsigned) sizeof (Token) - 1
-                   ) + 1;
-
-  FormatString = (CHAR8 *) malloc (FormatLength);
-  if (FormatString == NULL) {
-    fclose (Fp);
-
-    Error (NULL, 0, 4001, "Resource", "memory cannot be allocated!");
-    return EFI_OUT_OF_RESOURCES;
-  }
-
-  snprintf (
+  sprintf (
     FormatString,
-    FormatLength,
     "%%%us %%%us %%%us %%%us %%%us %%%us %%%us",
     (unsigned) sizeof (Buff1) - 1,
     (unsigned) sizeof (Buff2) - 1,
@@ -1135,10 +1131,6 @@ Returns:
   GetRelativeAddressInVtfBuffer (SalEntryAdd, &RelativeAddress, FIRST_VTF);
 
   memcpy ((VOID *) RelativeAddress, (VOID *) CompStartAddress, sizeof (UINT64));
-
-  if (FormatString != NULL) {
-    free (FormatString);
-  }
 
   if (Fp != NULL) {
     fclose (Fp);
@@ -2242,8 +2234,7 @@ Returns:
   CHAR8   Section[MAX_LONG_FILE_PATH];
   CHAR8   Token[MAX_LONG_FILE_PATH];
   CHAR8   BaseToken[MAX_LONG_FILE_PATH];
-  CHAR8   *FormatString;
-  INTN    FormatLength;
+  CHAR8   FormatString[MAX_LINE_LEN];
   UINT64  TokenAddress;
   long    StartLocation;
 
@@ -2269,9 +2260,20 @@ Returns:
   //
   // Use the file name minus extension as the base for tokens
   //
-  strcpy (BaseToken, SourceFileName);
+  if (strlen (SourceFileName) >= MAX_LONG_FILE_PATH) {
+    fclose (SourceFile);
+    Error (NULL, 0, 2000, "Invalid parameter", "The source file name is too long.");
+    return EFI_ABORTED;
+  }
+  strncpy (BaseToken, SourceFileName, MAX_LONG_FILE_PATH - 1);
+  BaseToken[MAX_LONG_FILE_PATH - 1] = 0;
   strtok (BaseToken, ". \t\n");
-  strcat (BaseToken, "__");
+  if (strlen (BaseToken) + strlen ("__") >= MAX_LONG_FILE_PATH) {
+    fclose (SourceFile);
+    Error (NULL, 0, 2000, "Invalid parameter", "The source file name is too long.");
+    return EFI_ABORTED;
+  }
+  strncat (BaseToken, "__", MAX_LONG_FILE_PATH - strlen (BaseToken) - 1);
 
   //
   // Open the destination file
@@ -2324,27 +2326,8 @@ Returns:
   //
   // Generate the format string for fscanf
   //
-  FormatLength = snprintf (
-                   NULL,
-                   0,
-                   "%%%us | %%%us | %%%us | %%%us\n",
-                   (unsigned) sizeof (Type) - 1,
-                   (unsigned) sizeof (Address) - 1,
-                   (unsigned) sizeof (Section) - 1,
-                   (unsigned) sizeof (Token) - 1
-                   ) + 1;
-
-  FormatString = (CHAR8 *) malloc (FormatLength);
-  if (FormatString == NULL) {
-    fclose (SourceFile);
-    fclose (DestFile);
-    Error (NULL, 0, 4001, "Resource", "memory cannot be allocated!");
-    return EFI_ABORTED;
-  }
-
-  snprintf (
+  sprintf (
     FormatString,
-    FormatLength,
     "%%%us | %%%us | %%%us | %%%us\n",
     (unsigned) sizeof (Type) - 1,
     (unsigned) sizeof (Address) - 1,
@@ -2383,7 +2366,6 @@ Returns:
     }
   }
 
-  free (FormatString);
   fclose (SourceFile);
   fclose (DestFile);
   return EFI_SUCCESS;
@@ -2752,9 +2734,11 @@ Returns:
     }
     SymFileName = VTF_SYM_FILE;
   } else {
-    assert (OutFileName1);
-    INTN OutFileNameLen = strlen(OutFileName1);
+    INTN OutFileNameLen;
     INTN NewIndex;
+
+    assert (OutFileName1);
+    OutFileNameLen = strlen(OutFileName1);
 
     for (NewIndex = OutFileNameLen; NewIndex > 0; --NewIndex) {
       if (OutFileName1[NewIndex] == '/' || OutFileName1[NewIndex] == '\\') {

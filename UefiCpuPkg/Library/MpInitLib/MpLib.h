@@ -1,7 +1,7 @@
 /** @file
   Common header file for MP Initialize Library.
 
-  Copyright (c) 2016, Intel Corporation. All rights reserved.<BR>
+  Copyright (c) 2016 - 2017, Intel Corporation. All rights reserved.<BR>
   This program and the accompanying materials
   are licensed and made available under the terms and conditions of the BSD License
   which accompanies this distribution.  The full text of the license may be found at
@@ -102,6 +102,9 @@ typedef struct {
   UINTN                          Dr3;
   UINTN                          Dr6;
   UINTN                          Dr7;
+  IA32_DESCRIPTOR                Gdtr;
+  IA32_DESCRIPTOR                Idtr;
+  UINT16                         Tr;
 } CPU_VOLATILE_REGISTERS;
 
 //
@@ -112,9 +115,6 @@ typedef struct {
   volatile UINT32                *StartupApSignal;
   volatile UINTN                 ApFunction;
   volatile UINTN                 ApFunctionArgument;
-  UINT32                         InitialApicId;
-  UINT32                         ApicId;
-  UINT32                         Health;
   BOOLEAN                        CpuHealthy;
   volatile CPU_STATE             State;
   CPU_VOLATILE_REGISTERS         VolatileRegisters;
@@ -132,11 +132,14 @@ typedef struct {
 // we need to make sure the each fields offset same in different
 // architecture.
 //
+#pragma pack (1)
 typedef struct {
   UINT32                         InitialApicId;
   UINT32                         ApicId;
   UINT32                         Health;
+  UINT64                         ApTopOfStack;
 } CPU_INFO_IN_HOB;
+#pragma pack ()
 
 //
 // AP reset code information including code address and size,
@@ -149,6 +152,7 @@ typedef struct {
   UINTN             RendezvousFunnelSize;
   UINT8             *RelocateApLoopFuncAddress;
   UINTN             RelocateApLoopFuncSize;
+  UINTN             ModeTransitionOffset;
 } MP_ASSEMBLY_ADDRESS_MAP;
 
 typedef struct _CPU_MP_DATA  CPU_MP_DATA;
@@ -169,12 +173,20 @@ typedef struct {
   IA32_DESCRIPTOR       IdtrProfile;
   UINTN                 BufferStart;
   UINTN                 ModeOffset;
-  UINTN                 NumApsExecuting;
+  UINTN                 ApIndex;
   UINTN                 CodeSegment;
   UINTN                 DataSegment;
   UINTN                 EnableExecuteDisable;
   UINTN                 Cr3;
+  UINTN                 InitFlag;
+  CPU_INFO_IN_HOB       *CpuInfo;
+  UINTN                 NumApsExecuting;
   CPU_MP_DATA           *CpuMpData;
+  UINTN                 InitializeFloatingPointUnitsAddress;
+  UINT32                ModeTransitionMemory;
+  UINT16                ModeTransitionSegment;
+  UINT32                ModeHighMemory;
+  UINT16                ModeHighSegment;
 } MP_CPU_EXCHANGE_INFO;
 
 #pragma pack()
@@ -196,9 +208,9 @@ struct _CPU_MP_DATA {
   UINTN                          CpuApStackSize;
   MP_ASSEMBLY_ADDRESS_MAP        AddressMap;
   UINTN                          WakeupBuffer;
+  UINTN                          WakeupBufferHigh;
   UINTN                          BackupBuffer;
   UINTN                          BackupBufferSize;
-  BOOLEAN                        SaveRestoreFlag;
 
   volatile UINT32                StartCount;
   volatile UINT32                FinishedCount;
@@ -216,6 +228,7 @@ struct _CPU_MP_DATA {
   AP_INIT_STATE                  InitFlag;
   BOOLEAN                        X2ApicEnable;
   BOOLEAN                        SwitchBspFlag;
+  UINTN                          NewBspNumber;
   CPU_EXCHANGE_ROLE_INFO         BSPInfo;
   CPU_EXCHANGE_ROLE_INFO         APInfo;
   MTRR_SETTINGS                  MtrrTable;
@@ -224,6 +237,14 @@ struct _CPU_MP_DATA {
   UINT16                         PmCodeSegment;
   CPU_AP_DATA                    *CpuData;
   volatile MP_CPU_EXCHANGE_INFO  *MpCpuExchangeInfo;
+
+  UINT32                         CurrentTimerCount;
+  UINTN                          DivideValue;
+  UINT8                          Vector;
+  BOOLEAN                        PeriodicMode;
+  BOOLEAN                        TimerInterruptState;
+  UINT64                         MicrocodePatchAddress;
+  UINT64                         MicrocodePatchRegionSize;
 };
 
 extern EFI_GUID mCpuInitMpLibHobGuid;
@@ -247,7 +268,9 @@ VOID
 (EFIAPI * ASM_RELOCATE_AP_LOOP) (
   IN BOOLEAN                 MwaitSupport,
   IN UINTN                   ApTargetCState,
-  IN UINTN                   PmCodeSegment
+  IN UINTN                   PmCodeSegment,
+  IN UINTN                   TopOfApStack,
+  IN UINTN                   NumberToFinish
   );
 
 /**
@@ -298,24 +321,35 @@ SaveCpuMpData (
   IN CPU_MP_DATA   *CpuMpData
   );
 
-/**
-  Allocate reset vector buffer.
 
-  @param[in, out]  CpuMpData  The pointer to CPU MP Data structure.
+/**
+  Get available system memory below 1MB by specified size.
+
+  @param[in] WakeupBufferSize   Wakeup buffer size required
+
+  @retval other   Return wakeup buffer address below 1MB.
+  @retval -1      Cannot find free memory below 1MB.
 **/
-VOID
-AllocateResetVector (
-  IN OUT CPU_MP_DATA          *CpuMpData
+UINTN
+GetWakeupBuffer (
+  IN UINTN                WakeupBufferSize
   );
 
 /**
-  Free AP reset vector buffer.
+  Get available EfiBootServicesCode memory below 4GB by specified size.
 
-  @param[in]  CpuMpData  The pointer to CPU MP Data structure.
+  This buffer is required to safely transfer AP from real address mode to
+  protected mode or long mode, due to the fact that the buffer returned by
+  GetWakeupBuffer() may be marked as non-executable.
+
+  @param[in] BufferSize   Wakeup transition buffer size.
+
+  @retval other   Return wakeup transition buffer address below 4GB.
+  @retval 0       Cannot find free memory below 4GB.
 **/
-VOID
-FreeResetVector (
-  IN CPU_MP_DATA              *CpuMpData
+UINTN
+GetModeTransitionBuffer (
+  IN UINTN                BufferSize
   );
 
 /**
@@ -360,7 +394,7 @@ InitMpGlobalData (
                                       simultaneously.
   @param[in]  WaitEvent               The event created by the caller with CreateEvent()
                                       service.
-  @param[in]  TimeoutInMicrosecsond   Indicates the time limit in microseconds for
+  @param[in]  TimeoutInMicroseconds   Indicates the time limit in microseconds for
                                       APs to return from Procedure, either for
                                       blocking or non-blocking mode.
   @param[in]  ProcedureArgument       The parameter passed into Procedure for
@@ -397,7 +431,7 @@ StartupAllAPsWorker (
   @param[in]  ProcessorNumber         The handle number of the AP.
   @param[in]  WaitEvent               The event created by the caller with CreateEvent()
                                       service.
-  @param[in]  TimeoutInMicrosecsond   Indicates the time limit in microseconds for
+  @param[in]  TimeoutInMicroseconds   Indicates the time limit in microseconds for
                                       APs to return from Procedure, either for
                                       blocking or non-blocking mode.
   @param[in]  ProcedureArgument       The parameter passed into Procedure for
@@ -531,43 +565,12 @@ IsMwaitSupport (
   );
 
 /**
-  Notify function on End Of PEI PPI.
+  Enable Debug Agent to support source debugging on AP function.
 
-  On S3 boot, this function will restore wakeup buffer data.
-  On normal boot, this function will flag wakeup buffer to be un-used type.
-
-  @param[in]  PeiServices        The pointer to the PEI Services Table.
-  @param[in]  NotifyDescriptor   Address of the notification descriptor data structure.
-  @param[in]  Ppi                Address of the PPI that was installed.
-
-  @retval EFI_SUCCESS        When everything is OK.
-**/
-EFI_STATUS
-EFIAPI
-CpuMpEndOfPeiCallback (
-  IN EFI_PEI_SERVICES             **PeiServices,
-  IN EFI_PEI_NOTIFY_DESCRIPTOR    *NotifyDescriptor,
-  IN VOID                         *Ppi
-  );
-
-/**
-  Get available system memory below 1MB by specified size.
-
-  @param[in]  CpuMpData  The pointer to CPU MP Data structure.
 **/
 VOID
-BackupAndPrepareWakeupBuffer(
-  IN CPU_MP_DATA              *CpuMpData
-  );
-
-/**
-  Restore wakeup buffer data.
-
-  @param[in]  CpuMpData  The pointer to CPU MP Data structure.
-**/
-VOID
-RestoreWakeupBuffer(
-  IN CPU_MP_DATA              *CpuMpData
+EnableDebugAgent (
+  VOID
   );
 
 #endif

@@ -1,6 +1,6 @@
 ## @ GenCfgOpt.py
 #
-# Copyright (c) 2014 - 2016, Intel Corporation. All rights reserved.<BR>
+# Copyright (c) 2014 - 2017, Intel Corporation. All rights reserved.<BR>
 # This program and the accompanying materials are licensed and made available under
 # the terms and conditions of the BSD License that accompanies this distribution.
 # The full text of the license may be found at
@@ -289,7 +289,6 @@ class CGenCfgOpt:
     def __init__(self):
         self.Debug          = False
         self.Error          = ''
-        self.ReleaseMode    = True
 
         self._GlobalDataDef = """
 GlobalDataDef
@@ -317,13 +316,6 @@ EndList
         self._DscFile     = ''
         self._FvDir       = ''
         self._MapVer      = 0
-
-    def ParseBuildMode (self, OutputStr):
-        if "RELEASE_" in OutputStr:
-            self.ReleaseMode = True
-        if "DEBUG_" in OutputStr:
-            self.ReleaseMode = False
-        return
 
     def ParseMacros (self, MacroDefStr):
         # ['-DABC=1', '-D', 'CFG_DEBUG=1', '-D', 'CFG_OUTDIR=Build']
@@ -523,9 +515,16 @@ EndList
                                     if Match:
                                         IncludeFilePath = Match.group(1)
                                         IncludeFilePath = self.ExpandMacros(IncludeFilePath)
-                                        try:
-                                            IncludeDsc  = open(IncludeFilePath, "r")
-                                        except:
+                                        PackagesPath = os.getenv("PACKAGES_PATH")
+                                        if PackagesPath:
+                                          for PackagePath in PackagesPath.split(os.pathsep):
+                                              IncludeFilePathAbs = os.path.join(os.path.normpath(PackagePath), os.path.normpath(IncludeFilePath))
+                                              if os.path.exists(IncludeFilePathAbs):
+                                                  IncludeDsc  = open(IncludeFilePathAbs, "r")
+                                                  break
+                                        else:
+                                          IncludeDsc  = open(IncludeFilePath, "r")
+                                        if IncludeDsc == None:
                                             print("ERROR: Cannot open file '%s'" % IncludeFilePath)
                                             raise SystemExit
                                         NewDscLines = IncludeDsc.readlines()
@@ -808,9 +807,6 @@ EndList
                     TxtFd.write("%s.UnusedUpdSpace%d|%s0x%04X|0x%04X|{0}\n" % (Item['space'], SpaceIdx, Default, NextOffset - StartAddr, Offset - NextOffset))
                     SpaceIdx = SpaceIdx + 1
                 NextOffset = Offset + Item['length']
-                if Item['cname'] == 'PcdSerialIoUartDebugEnable':
-                    if self.ReleaseMode == False:
-                        Item['value'] = 0x01
                 TxtFd.write("%s.%s|%s0x%04X|%s|%s\n" % (Item['space'],Item['cname'],Default,Item['offset'] - StartAddr,Item['length'],Item['value']))
             TxtFd.close()
         return 0
@@ -1232,6 +1228,7 @@ EndList
         return 0
 
     def WriteBsfStruct  (self, BsfFd, Item):
+        LogExpr = CLogicalExpression()
         if Item['type'] == "None":
             Space = "gPlatformFspPkgTokenSpaceGuid"
         else:
@@ -1253,6 +1250,9 @@ EndList
                 for Option in OptList:
                     Option = Option.strip()
                     (OpVal, OpStr) = Option.split(':')
+                    test = LogExpr.getNumber (OpVal)
+                    if test is None:
+                        raise Exception("Selection Index '%s' is not a number" % OpVal)
                     TmpList.append((OpVal, OpStr))
         return  TmpList
 
@@ -1421,10 +1421,10 @@ def Main():
             else:
                 OutFile = sys.argv[4]
                 Start = 5
-            GenCfgOpt.ParseBuildMode(sys.argv[3])
-            if GenCfgOpt.ParseMacros(sys.argv[Start:]) != 0:
-                print "ERROR: Macro parsing failed !"
-                return 3
+            if argc > Start:
+                if GenCfgOpt.ParseMacros(sys.argv[Start:]) != 0:
+                    print "ERROR: Macro parsing failed !"
+                    return 3
 
         FvDir = sys.argv[3]
         if not os.path.exists(FvDir):

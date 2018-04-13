@@ -1,7 +1,7 @@
 /** @file
   Implement IP4 pesudo interface.
   
-Copyright (c) 2005 - 2016, Intel Corporation. All rights reserved.<BR>
+Copyright (c) 2005 - 2017, Intel Corporation. All rights reserved.<BR>
 This program and the accompanying materials
 are licensed and made available under the terms and conditions of the BSD License
 which accompanies this distribution.  The full text of the license may be found at
@@ -560,7 +560,6 @@ Ip4SetAddress (
 {
   EFI_ARP_CONFIG_DATA       ArpConfig;
   EFI_STATUS                Status;
-  INTN                      Len;
 
   NET_CHECK_SIGNATURE (Interface, IP4_INTERFACE_SIGNATURE);
 
@@ -575,9 +574,6 @@ Ip4SetAddress (
   Interface->Ip             = IpAddr;
   Interface->SubnetMask     = SubnetMask;
   Interface->SubnetBrdcast  = (IpAddr | ~SubnetMask);
-
-  Len                       = NetGetMaskLength (SubnetMask);
-  ASSERT (Len <= IP4_MASK_MAX);
   Interface->NetBrdcast     = (IpAddr | ~SubnetMask);
 
   //
@@ -859,7 +855,7 @@ Ip4OnArpResolvedDpc (
 
     Status = Interface->Mnp->Transmit (Interface->Mnp, &Token->MnpToken);
     if (EFI_ERROR (Status)) {
-      RemoveEntryList (Entry);
+      RemoveEntryList (&Token->Link);
       Token->CallBack (Token->IpInstance, Token->Packet, Status, 0, Token->Context);
 
       Ip4FreeLinkTxToken (Token);
@@ -1085,7 +1081,7 @@ SEND_NOW:
   InsertTailList (&Interface->SentFrames, &Token->Link);
   Status = Interface->Mnp->Transmit (Interface->Mnp, &Token->MnpToken);
   if (EFI_ERROR (Status)) {
-    RemoveEntryList (&Interface->SentFrames);
+    RemoveEntryList (&Token->Link);
     goto ON_ERROR;
   }
 
